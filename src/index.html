@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bronx Vacant Lot Detection</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="topbar">
+    <h1>Bronx Vacant Lot Detection</h1>
+  </div>
+
+  <div class="main-row">
+    <div class="sidebar">
+
+      <div id="slider-container"></div>
+
+      <div>
+        <h2>Layers</h2>
+        <div id="layer-panel"></div>
+      </div>
+
+      <div>
+        <h2>Error Map Legend</h2>
+        <div class="legend">
+          <div class="legend-item">
+            <div class="legend-swatch" style="background: rgb(0,200,0);"></div>
+            <span>True Positive (correctly detected)</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-swatch" style="background: rgb(220,0,0);"></div>
+            <span>False Positive (false alarm)</span>
+          </div>
+          <div class="legend-item">
+            <div class="legend-swatch" style="background: rgb(0,100,255);"></div>
+            <span>False Negative (missed)</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div id="map"></div>
+  </div>
+
+  <div class="footer">
+    Model trained on 2022 NAIP imagery &bull; Bronx test split &bull;
+    <a href="https://github.com/poltergeistjoya/Vacant_Lot_Detection_Webapp" target="_blank">GitHub</a>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

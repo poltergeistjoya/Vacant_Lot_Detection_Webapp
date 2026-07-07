@@ -1,0 +1,8 @@
+rio-tiler>=6.4
+rasterio
+scipy
+mercantile
+Pillow
+tqdm
+click
+numpy

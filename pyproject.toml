@@ -1,0 +1,19 @@
+[project]
+name = "vacant-lot-detection-webapp"
+version = "0.1.0"
+description = "Interactive map for Bronx vacant lot detection predictions"
+requires-python = ">=3.12"
+dependencies = [
+    "rio-tiler>=6.4",
+    "rasterio",
+    "scipy",
+    "mercantile",
+    "Pillow",
+    "tqdm",
+    "click",
+    "numpy",
+]
+
+[project.scripts]
+extract-metrics = "scripts.extract_metrics:main"
+generate-tiles = "scripts.generate_tiles:main"
