@@ -1,0 +1,15 @@
+# Copy this file to config.local.yaml and fill in your local paths.
+# config.local.yaml is gitignored — never commit it.
+
+paths:
+  # Root of the Vacant_Lot_Detection model/data repository
+  model_repo: /path/to/Vacant_Lot_Detection
+
+  # Relative to model_repo — change if you used a different run name
+  model_run: outputs/models/deeplabv3plus/kahan_027
+
+thresholds:
+  default: 0.298
+  good_zone: [0.298, 0.450]
+  evaluation_thresholds: [0.0, 0.1, 0.2, 0.298, 0.32, 0.34, 0.36, 0.38, 0.40,
+                          0.42, 0.44, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]

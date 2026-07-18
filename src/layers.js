@@ -22,9 +22,7 @@ export const CHECKPOINTS = [
 export const DEFAULT_THRESHOLD = 0.298;
 export const GOOD_ZONE = [0.298, 0.450];
 
-export const TILE_BASE = import.meta.env.DEV
-  ? 'http://localhost:8080/tiles'
-  : '/tiles';
+export const TILE_BASE = '/tiles';
 
 export function tileUrl(prefix, tStr) {
   return `${TILE_BASE}/${prefix}_${tStr}/{z}/{x}/{y}.png`;

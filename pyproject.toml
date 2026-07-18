@@ -12,8 +12,5 @@ dependencies = [
     "tqdm",
     "click",
     "numpy",
+    "pyyaml",
 ]
-
-[project.scripts]
-extract-metrics = "scripts.extract_metrics:main"
-generate-tiles = "scripts.generate_tiles:main"

@@ -5,51 +5,56 @@ import json
 from pathlib import Path
 
 import numpy as np
+import yaml
 
-NPZ_PATH = Path("/Users/joyadebi/repos/Vacant_Lot_Detection/outputs/models/deeplabv3plus/kahan_027/pr_curves.npz")
+_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.local.yaml"
+if not _CONFIG_PATH.exists():
+    raise FileNotFoundError(
+        f"Config not found: {_CONFIG_PATH}\n"
+        "Copy config.template.yaml to config.local.yaml and fill in your paths."
+    )
+with _CONFIG_PATH.open() as _f:
+    _cfg = yaml.safe_load(_f)
+
+NPZ_PATH = Path(_cfg["paths"]["model_repo"]) / _cfg["paths"]["model_run"] / "pr_curves.npz"
 OUT_PATH = Path(__file__).resolve().parent.parent / "data" / "thresholds.json"
 
-CHECKPOINTS = [0.0, 0.1, 0.2, 0.298, 0.32, 0.34, 0.36, 0.38, 0.40,
-               0.42, 0.44, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
-
-def metrics_at(precision, recall, thresholds, t):
-    """Interpolate precision/recall at threshold t using sklearn convention."""
-    if t <= 0.0:
-        idx = 0
-    elif t >= thresholds[-1]:
-        idx = len(thresholds) - 1
-    else:
-        idx = int(np.searchsorted(thresholds, t, side="right")) - 1
-        idx = max(0, min(idx, len(thresholds) - 1))
-    p, r = float(precision[idx]), float(recall[idx])
+def compute_metrics(precision, recall, thresholds, checkpoints):
+    idx = np.clip(np.searchsorted(thresholds, checkpoints, side="right") - 1, 0, len(thresholds) - 1)
+    p, r = precision[idx], recall[idx]
     f1 = 2 * p * r / (p + r + 1e-12)
     f2 = 5 * p * r / (4 * p + r + 1e-12)
-    return {"precision": round(p, 4), "recall": round(r, 4),
-            "f1": round(f1, 4), "f2": round(f2, 4)}
+    return [
+        {"precision": round(float(p[i]), 4), "recall": round(float(r[i]), 4),
+         "f1": round(float(f1[i]), 4), "f2": round(float(f2[i]), 4)}
+        for i in range(len(checkpoints))
+    ]
 
 
 def main():
-    data = np.load(NPZ_PATH)
-    splits = {}
-    for prefix in ("val", "test"):
-        splits[prefix] = (
-            data[f"{prefix}_pr_precision"],
-            data[f"{prefix}_pr_recall"],
-            data[f"{prefix}_pr_thresholds"],
-        )
+    t_cfg = _cfg["thresholds"]
+    checkpoints = np.array(t_cfg["evaluation_thresholds"])
 
-    entries = []
-    for t in CHECKPOINTS:
-        t_str = f"t{round(t * 1000):04d}"
-        entry = {"t": t, "tStr": t_str}
-        for split_name, (prec, rec, thresh) in splits.items():
-            entry[split_name] = metrics_at(prec, rec, thresh, t)
-        entries.append(entry)
+    data = np.load(NPZ_PATH)
+    splits = {
+        prefix: (data[f"{prefix}_pr_precision"], data[f"{prefix}_pr_recall"], data[f"{prefix}_pr_thresholds"])
+        for prefix in ("val", "test")
+    }
+
+    split_metrics = {
+        name: compute_metrics(prec, rec, thresh, checkpoints)
+        for name, (prec, rec, thresh) in splits.items()
+    }
+
+    entries = [
+        {"t": float(t), "tStr": f"t{round(t * 1000):04d}", **{name: split_metrics[name][i] for name in splits}}
+        for i, t in enumerate(checkpoints)
+    ]
 
     result = {
-        "default_threshold": 0.298,
-        "good_zone": [0.298, 0.450],
+        "default_threshold": t_cfg["default"],
+        "good_zone": t_cfg["good_zone"],
         "checkpoints": entries,
     }
 

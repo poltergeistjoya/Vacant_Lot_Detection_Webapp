@@ -25,11 +25,25 @@ from PIL import Image
 from scipy.ndimage import binary_erosion
 from tqdm import tqdm
 
+import yaml
+
+_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.local.yaml"
+if not _CONFIG_PATH.exists():
+    raise FileNotFoundError(
+        f"Config not found: {_CONFIG_PATH}\n"
+        "Copy config.template.yaml to config.local.yaml and fill in your paths."
+    )
+with _CONFIG_PATH.open() as _f:
+    _cfg = yaml.safe_load(_f)
+
+_model_repo = Path(_cfg["paths"]["model_repo"])
+_model_run = _cfg["paths"]["model_run"]
+
 # --- Paths ---
-PRED_STRIPPED = Path("/Users/joyadebi/repos/Vacant_Lot_Detection/outputs/models/deeplabv3plus/kahan_027/figures/test_pred_s512.tif")
+PRED_STRIPPED = _model_repo / _model_run / "figures/test_pred_s512.tif"
 PRED_COG = PRED_STRIPPED.with_name("test_pred_s512_cog.tif")
-GT_MASK = Path("/Users/joyadebi/repos/Vacant_Lot_Detection/outputs/labels/vacancy_mask_v2.tif")
-NAIP_VRT = Path("/Users/joyadebi/repos/Vacant_Lot_Detection/data/imagery/naip/nyc/2022/naip_nyc_2022.vrt")
+GT_MASK = _model_repo / "outputs/labels/vacancy_mask_v2.tif"
+NAIP_VRT = _model_repo / "data/imagery/naip/nyc/2022/naip_nyc_2022.vrt"
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "tiles"
 
 # Prediction extent in EPSG:4326 (with small buffer for edge tiles)
