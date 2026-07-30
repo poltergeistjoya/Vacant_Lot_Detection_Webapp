@@ -16,7 +16,7 @@ if not _CONFIG_PATH.exists():
 with _CONFIG_PATH.open() as _f:
     _cfg = yaml.safe_load(_f)
 
-NPZ_PATH = Path(_cfg["paths"]["model_repo"]) / _cfg["paths"]["model_run"] / "pr_curves.npz"
+NPZ_PATH = Path(_cfg["data"]["pr_curves"])
 OUT_PATH = Path(__file__).resolve().parent.parent / "data" / "thresholds.json"
 
 

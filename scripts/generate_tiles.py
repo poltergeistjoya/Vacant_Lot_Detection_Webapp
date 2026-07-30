@@ -13,6 +13,7 @@ under prefixed subdirectories (outline_t0298/, error_t0298/, naip/).
 
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 import click
@@ -36,23 +37,19 @@ if not _CONFIG_PATH.exists():
 with _CONFIG_PATH.open() as _f:
     _cfg = yaml.safe_load(_f)
 
-_model_repo = Path(_cfg["paths"]["model_repo"])
-_model_run = _cfg["paths"]["model_run"]
-
 # --- Paths ---
-PRED_STRIPPED = _model_repo / _model_run / "figures/test_pred_s512.tif"
+PRED_STRIPPED = Path(_cfg["data"]["prediction_tif"])
 PRED_COG = PRED_STRIPPED.with_name("test_pred_s512_cog.tif")
-GT_MASK = _model_repo / "outputs/labels/vacancy_mask_v2.tif"
-NAIP_VRT = _model_repo / "data/imagery/naip/nyc/2022/naip_nyc_2022.vrt"
+GT_MASK = Path(_cfg["data"]["gt_mask"])
+NAIP_VRT = Path(_cfg["data"]["naip_vrt"])
 DEFAULT_OUT = Path(__file__).resolve().parent.parent / "tiles"
 
-# Prediction extent in EPSG:4326 (with small buffer for edge tiles)
+CHECKPOINTS = _cfg["thresholds"]["evaluation_thresholds"]
+
+# NYC-specific constants
 BOUNDS_4326 = (-73.9409, 40.7857, -73.7577, 40.9248)
 OVERLAY_ZOOMS = list(range(12, 18))  # z12–17 for outline + error
 NAIP_ZOOMS = list(range(12, 17))     # z12–16
-
-CHECKPOINTS = [0.0, 0.1, 0.2, 0.298, 0.32, 0.34, 0.36, 0.38, 0.40,
-               0.42, 0.44, 0.45, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 
 def t_str(t):
