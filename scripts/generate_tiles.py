@@ -13,7 +13,6 @@ under prefixed subdirectories (outline_t0298/, error_t0298/, naip/).
 
 import subprocess
 import sys
-import warnings
 from pathlib import Path
 
 import click
@@ -23,7 +22,7 @@ import rasterio
 from rasterio.enums import Resampling
 from rasterio.windows import from_bounds
 from PIL import Image
-from scipy.ndimage import binary_erosion
+from scipy.ndimage import gaussian_filter
 from tqdm import tqdm
 
 import yaml
@@ -132,18 +131,16 @@ def write_tiles_from_array(rgba, profile, layer_dir, zooms, desc=""):
     click.echo(f"  {desc}: {written} tiles written")
 
 
-def generate_outline(prob, t, profile):
-    """Yellow outline of predicted vacant lots at threshold t."""
+def generate_overlay(prob, t):
+    """Dark semi-transparent overlay on non-vacant predictions with smooth boundary."""
+    smoothed = gaussian_filter(prob, sigma=3)
     H, W = prob.shape
-    pred_bin = prob > t
-    eroded = binary_erosion(pred_bin, iterations=2)
-    outline = pred_bin & ~eroded
-
     rgba = np.zeros((4, H, W), dtype=np.uint8)
-    rgba[0][outline] = 255   # R
-    rgba[1][outline] = 224   # G
-    rgba[2][outline] = 51    # B
-    rgba[3][outline] = 230   # A
+    non_vacant = smoothed <= t
+    rgba[0][non_vacant] = 20
+    rgba[1][non_vacant] = 20
+    rgba[2][non_vacant] = 20
+    rgba[3][non_vacant] = 140
     return rgba
 
 
@@ -198,9 +195,9 @@ def generate_naip_tiles(output_dir):
 @click.option("--skip-naip", is_flag=True, help="Skip NAIP tile generation")
 @click.option("--output-dir", type=click.Path(), default=str(DEFAULT_OUT),
               help="Output directory for tiles")
-@click.option("--skip-outline", is_flag=True, help="Skip outline tiles")
+@click.option("--skip-overlay", is_flag=True, help="Skip non-vacant overlay tiles")
 @click.option("--skip-error", is_flag=True, help="Skip error map tiles")
-def main(skip_cog, only_threshold, skip_naip, output_dir, skip_outline, skip_error):
+def main(skip_cog, only_threshold, skip_naip, output_dir, skip_overlay, skip_error):
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -216,19 +213,19 @@ def main(skip_cog, only_threshold, skip_naip, output_dir, skip_outline, skip_err
         ts = t_str(t)
         click.echo(f"\n--- Threshold {t} ({ts}) ---")
 
-        if not skip_outline:
-            rgba_outline = generate_outline(prob, t, profile)
+        if not skip_overlay:
+            rgba_overlay = generate_overlay(prob, t)
             write_tiles_from_array(
-                rgba_outline, profile,
-                output_dir / f"outline_{ts}", OVERLAY_ZOOMS,
-                desc=f"outline_{ts}")
-            del rgba_outline
+                rgba_overlay, profile,
+                output_dir / ts / "overlay", OVERLAY_ZOOMS,
+                desc=f"overlay_{ts}")
+            del rgba_overlay
 
         if not skip_error:
             rgba_error = generate_error(prob, gt, t)
             write_tiles_from_array(
                 rgba_error, profile,
-                output_dir / f"error_{ts}", OVERLAY_ZOOMS,
+                output_dir / ts / "error", OVERLAY_ZOOMS,
                 desc=f"error_{ts}")
             del rgba_error
 

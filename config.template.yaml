@@ -7,6 +7,7 @@ data:
   prediction_tif: /path/to/outputs/models/deeplabv3plus/kahan_027/figures/test_pred_s512.tif
   gt_mask:        /path/to/outputs/labels/vacancy_mask_v2.tif
   naip_vrt:       /path/to/data/imagery/naip/nyc/2022/naip_nyc_2022.vrt
+  roads_geojson:  /path/to/data/geographic/nyc_roads.geojson
 
 thresholds:
   default: 0.298

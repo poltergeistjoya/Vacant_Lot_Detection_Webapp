@@ -24,8 +24,8 @@ export const GOOD_ZONE = [0.298, 0.450];
 
 export const TILE_BASE = '/tiles';
 
-export function tileUrl(prefix, tStr) {
-  return `${TILE_BASE}/${prefix}_${tStr}/{z}/{x}/{y}.png`;
+export function tileUrl(type, tStr) {
+  return `${TILE_BASE}/${tStr}/${type}/{z}/{x}/{y}.png`;
 }
 
 export const ESRI_BASEMAP_URL =

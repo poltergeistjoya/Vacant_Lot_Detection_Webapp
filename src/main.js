@@ -33,10 +33,11 @@ map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
 // --- Layer definitions ---
 const LAYERS = [
-  { id: 'naip', label: 'NAIP Imagery', defaultOn: false, tooltip: TOOLTIPS.naip },
-  { id: 'outline', label: 'Predicted Outlines', defaultOn: true, tooltip: TOOLTIPS.outline },
-  { id: 'error', label: 'Error Map', defaultOn: false, tooltip: TOOLTIPS.error },
-  { id: 'parks', label: 'Parks', defaultOn: false, tooltip: TOOLTIPS.parks },
+  { id: 'naip',    label: 'NAIP Imagery',      defaultOn: false, tooltip: TOOLTIPS.naip },
+  { id: 'overlay', label: 'Vacant Overlay',    defaultOn: true,  tooltip: TOOLTIPS.overlay },
+  { id: 'roads',   label: 'Roads',             defaultOn: true,  tooltip: TOOLTIPS.roads },
+  { id: 'error',   label: 'Error Map',         defaultOn: false, tooltip: TOOLTIPS.error },
+  { id: 'parks',   label: 'Parks',             defaultOn: false, tooltip: TOOLTIPS.parks },
 ];
 
 const layerVisibility = {};
@@ -59,9 +60,9 @@ function addSources() {
     tileSize: 256,
   });
 
-  map.addSource('outline', {
+  map.addSource('overlay', {
     type: 'raster',
-    tiles: [tileUrl('outline', currentTStr)],
+    tiles: [tileUrl('overlay', currentTStr)],
     tileSize: 256,
   });
 
@@ -69,6 +70,11 @@ function addSources() {
     type: 'raster',
     tiles: [tileUrl('error', currentTStr)],
     tileSize: 256,
+  });
+
+  map.addSource('roads', {
+    type: 'geojson',
+    data: 'roads.geojson',
   });
 
   map.addSource('parks', {
@@ -86,10 +92,10 @@ function addMapLayers() {
   });
 
   map.addLayer({
-    id: 'outline',
+    id: 'overlay',
     type: 'raster',
-    source: 'outline',
-    layout: { visibility: layerVisibility.outline ? 'visible' : 'none' },
+    source: 'overlay',
+    layout: { visibility: layerVisibility.overlay ? 'visible' : 'none' },
     paint: { 'raster-opacity': 1, 'raster-opacity-transition': { duration: 150 } },
   });
 
@@ -99,6 +105,18 @@ function addMapLayers() {
     source: 'error',
     layout: { visibility: layerVisibility.error ? 'visible' : 'none' },
     paint: { 'raster-opacity': 1, 'raster-opacity-transition': { duration: 150 } },
+  });
+
+  map.addLayer({
+    id: 'roads',
+    type: 'line',
+    source: 'roads',
+    layout: { visibility: layerVisibility.roads ? 'visible' : 'none' },
+    paint: {
+      'line-color': '#141414',
+      'line-opacity': 0.55,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5],
+    },
   });
 
   map.addLayer({
@@ -151,6 +169,8 @@ function toggleLayer(id, visible) {
   if (id === 'parks') {
     map.setLayoutProperty('parks-fill', 'visibility', vis);
     map.setLayoutProperty('parks-line', 'visibility', vis);
+  } else if (id === 'roads') {
+    map.setLayoutProperty('roads', 'visibility', vis);
   } else {
     map.setLayoutProperty(id, 'visibility', vis);
   }
@@ -159,7 +179,7 @@ function toggleLayer(id, visible) {
 // --- Threshold change ---
 function onThresholdChange(cp) {
   currentTStr = cp.tStr;
-  swapRasterSource('outline', tileUrl('outline', cp.tStr));
+  swapRasterSource('overlay', tileUrl('overlay', cp.tStr));
   swapRasterSource('error', tileUrl('error', cp.tStr));
 }
 
@@ -187,7 +207,7 @@ function swapRasterSource(layerId, newUrl) {
 }
 
 function getInsertBefore(layerId) {
-  const order = ['naip', 'outline', 'error', 'parks-fill'];
+  const order = ['naip', 'overlay', 'error', 'roads', 'parks-fill'];
   const idx = order.indexOf(layerId);
   for (let i = idx + 1; i < order.length; i++) {
     if (map.getLayer(order[i])) return order[i];
