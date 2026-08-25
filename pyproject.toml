@@ -13,4 +13,5 @@ dependencies = [
     "click",
     "numpy",
     "pyyaml",
+    "shapely",
 ]

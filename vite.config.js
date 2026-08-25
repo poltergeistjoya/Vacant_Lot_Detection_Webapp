@@ -10,6 +10,12 @@ export default {
   build: {
     outDir: '../dist',
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: path.resolve(__dirname, 'src/index.html'),
+        playground: path.resolve(__dirname, 'src/playground.html'),
+      },
+    },
   },
   plugins: [{
     name: 'serve-tiles',
@@ -24,6 +30,14 @@ export default {
           res.statusCode = 404;
           res.end();
         }
+      });
+
+      // SPA-style fallback: /playground → /playground.html
+      server.middlewares.use((req, res, next) => {
+        if (req.url === '/playground' || req.url === '/playground/') {
+          req.url = '/playground.html';
+        }
+        next();
       });
     },
   }],

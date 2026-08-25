@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Playground — Vacant Lot Viewer</title>
+  <link rel="stylesheet" href="./base.css">
+  <link rel="stylesheet" href="./playground.css">
+</head>
+<body>
+  <div class="layout">
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <a href="/" class="back-link" title="Back to Viewer">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>
+          </svg>
+        </a>
+        <h1 class="sidebar-title">Playground</h1>
+      </div>
+
+      <!-- Actions -->
+      <div class="panel">
+        <div class="btn-row">
+          <button id="reset-btn" class="btn btn-secondary">Reset</button>
+          <button id="compare-btn" class="btn btn-secondary">Original</button>
+        </div>
+      </div>
+
+      <!-- Vacancy Treatment -->
+      <details class="panel" open>
+        <summary class="panel-heading">Vacancy Treatment</summary>
+
+        <!-- Basemap Treatment -->
+        <details class="sub-panel" open>
+          <summary class="sub-panel-heading">Basemap Treatment</summary>
+          <div class="panel-section">
+            <label class="control-row">
+              <span class="control-label">Brightness</span>
+              <input type="range" id="ctl-basemap-brightness" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-basemap-brightness"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Contrast</span>
+              <input type="range" id="ctl-basemap-contrast" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-basemap-contrast"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Saturation</span>
+              <input type="range" id="ctl-basemap-saturation" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-basemap-saturation"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Hue Shift</span>
+              <input type="range" id="ctl-basemap-hue" min="-180" max="180" step="1">
+              <span class="control-value" id="val-basemap-hue"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Blur</span>
+              <input type="range" id="ctl-basemap-blur" min="0" max="5" step="0.1">
+              <span class="control-value" id="val-basemap-blur"></span>
+            </label>
+          </div>
+        </details>
+
+        <!-- Vacant Area Treatment -->
+        <details class="sub-panel" open>
+          <summary class="sub-panel-heading">Vacant Area Treatment</summary>
+          <div class="panel-section">
+            <label class="control-row">
+              <span class="control-label">Brightness</span>
+              <input type="range" id="ctl-vacant-brightness" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-vacant-brightness"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Contrast</span>
+              <input type="range" id="ctl-vacant-contrast" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-vacant-contrast"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Saturation</span>
+              <input type="range" id="ctl-vacant-saturation" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-vacant-saturation"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Hue Shift</span>
+              <input type="range" id="ctl-vacant-hue" min="-180" max="180" step="1">
+              <span class="control-value" id="val-vacant-hue"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Blur</span>
+              <input type="range" id="ctl-vacant-blur" min="0" max="5" step="0.1">
+              <span class="control-value" id="val-vacant-blur"></span>
+            </label>
+          </div>
+        </details>
+
+        <!-- Non-Vacant Area Treatment -->
+        <details class="sub-panel" open>
+          <summary class="sub-panel-heading">Non-Vacant Area Treatment</summary>
+          <div class="panel-section">
+            <label class="control-row">
+              <span class="control-label">Brightness</span>
+              <input type="range" id="ctl-nonvacant-brightness" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-nonvacant-brightness"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Contrast</span>
+              <input type="range" id="ctl-nonvacant-contrast" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-nonvacant-contrast"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Saturation</span>
+              <input type="range" id="ctl-nonvacant-saturation" min="0" max="2" step="0.01">
+              <span class="control-value" id="val-nonvacant-saturation"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Hue Shift</span>
+              <input type="range" id="ctl-nonvacant-hue" min="-180" max="180" step="1">
+              <span class="control-value" id="val-nonvacant-hue"></span>
+            </label>
+            <label class="control-row">
+              <span class="control-label">Blur</span>
+              <input type="range" id="ctl-nonvacant-blur" min="0" max="5" step="0.1">
+              <span class="control-value" id="val-nonvacant-blur"></span>
+            </label>
+          </div>
+        </details>
+
+        <!-- Boundary Effects -->
+        <details class="sub-panel" open>
+          <summary class="sub-panel-heading">Boundary Effects</summary>
+
+          <div class="panel-section">
+            <div class="section-label">Outline</div>
+            <label class="control-row">
+              <span class="control-label">Enabled</span>
+              <input type="checkbox" id="ctl-outline-enabled">
+              <span class="control-value"></span>
+            </label>
+            <div class="sub-controls">
+              <label class="control-row">
+                <span class="control-label">Color</span>
+                <input type="color" id="ctl-outline-color">
+                <span class="control-value"></span>
+              </label>
+              <label class="control-row">
+                <span class="control-label">Width</span>
+                <input type="range" id="ctl-outline-width" min="1" max="10" step="1">
+                <span class="control-value" id="val-outline-width"></span>
+              </label>
+              <label class="control-row">
+                <span class="control-label">Opacity</span>
+                <input type="range" id="ctl-outline-opacity" min="0" max="1" step="0.01">
+                <span class="control-value" id="val-outline-opacity"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <div class="section-label">Glow</div>
+            <label class="control-row">
+              <span class="control-label">Enabled</span>
+              <input type="checkbox" id="ctl-glow-enabled">
+              <span class="control-value"></span>
+            </label>
+            <div class="sub-controls">
+              <label class="control-row">
+                <span class="control-label">Color</span>
+                <input type="color" id="ctl-glow-color">
+                <span class="control-value"></span>
+              </label>
+              <label class="control-row">
+                <span class="control-label">Radius</span>
+                <input type="range" id="ctl-glow-radius" min="0" max="40" step="1">
+                <span class="control-value" id="val-glow-radius"></span>
+              </label>
+              <label class="control-row">
+                <span class="control-label">Strength</span>
+                <input type="range" id="ctl-glow-strength" min="0" max="1" step="0.01">
+                <span class="control-value" id="val-glow-strength"></span>
+              </label>
+              <label class="control-row">
+                <span class="control-label">Opacity</span>
+                <input type="range" id="ctl-glow-opacity" min="0" max="1" step="0.01">
+                <span class="control-value" id="val-glow-opacity"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="panel-section">
+            <div class="section-label">Shadow</div>
+            <label class="control-row">
+              <span class="control-label">Enabled</span>
+              <input type="checkbox" id="ctl-shadow-enabled">
+              <span class="control-value"></span>
+            </label>
+            <div class="sub-controls">
+              <label class="control-row">
+                <span class="control-label">Radius</span>
+                <input type="range" id="ctl-shadow-radius" min="0" max="40" step="1">
+                <span class="control-value" id="val-shadow-radius"></span>
+              </label>
+              <label class="control-row">
+                <span class="control-label">Strength</span>
+                <input type="range" id="ctl-shadow-strength" min="0" max="1" step="0.01">
+                <span class="control-value" id="val-shadow-strength"></span>
+              </label>
+            </div>
+          </div>
+        </details>
+      </details>
+
+      <!-- Layers (future) -->
+      <details class="panel">
+        <summary class="panel-heading">Layers</summary>
+        <div class="panel-section">
+          <div class="layers-placeholder">
+            <span class="text-muted">Future layers: transit, zoning, parcels</span>
+          </div>
+        </div>
+      </details>
+
+      <!-- Snapshots -->
+      <details class="panel" open>
+        <summary class="panel-heading">Snapshots</summary>
+        <div class="panel-section">
+          <div class="snapshot-actions">
+            <div class="snapshot-save-row">
+              <input type="text" id="snapshot-name" class="text-input" placeholder="Snapshot name...">
+              <button id="snapshot-save-btn" class="btn btn-primary btn-sm">Save</button>
+            </div>
+            <div id="snapshot-list" class="snapshot-list"></div>
+            <div class="btn-row" style="margin-top: 8px;">
+              <button id="export-btn" class="btn btn-secondary btn-sm">Export JSON</button>
+              <button id="import-btn" class="btn btn-secondary btn-sm">Import JSON</button>
+            </div>
+            <input type="file" id="import-file" accept=".json" hidden>
+          </div>
+        </div>
+      </details>
+    </aside>
+
+    <!-- Map -->
+    <div id="map"></div>
+  </div>
+
+  <script type="module" src="./playground.js"></script>
+</body>
+</html>
