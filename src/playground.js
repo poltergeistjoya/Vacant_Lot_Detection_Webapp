@@ -1,7 +1,7 @@
 import { createMap } from './lib/map.js';
 import { DEFAULTS } from './lib/layers.js';
 import {
-  applyBasemapFilter, applyVacantFilter, applyNonVacantFilter,
+  applyBasemapFilter, applyVacantFilter,
   applyOutlineChrome, applyGlowChrome, applyShadowChrome,
   applyAllEffects, clearAllEffects, renderAllShapes,
 } from './lib/effects.js';
@@ -40,7 +40,6 @@ function setComparing(on) {
 // ── Effect appliers (exit compare, delegate to lib) ─
 function onBasemapFilter() { exitCompare(); applyBasemapFilter(panes, state); saveActiveState(state); }
 function onVacantFilter() { exitCompare(); applyVacantFilter(panes, state); saveActiveState(state); }
-function onNonVacantFilter() { exitCompare(); applyNonVacantFilter(panes, state); saveActiveState(state); }
 function onOutlineChrome() { exitCompare(); applyOutlineChrome(panes, state); saveActiveState(state); }
 function onGlowChrome() { exitCompare(); applyGlowChrome(panes, state); saveActiveState(state); }
 function onShadowChrome() { exitCompare(); applyShadowChrome(panes, state); saveActiveState(state); }
@@ -73,12 +72,6 @@ function wireControls() {
   bindRange('vacant-hue', 'vacantHue', { onChange: onVacantFilter, format: v => `${v}°` });
   bindRange('vacant-blur', 'vacantBlur', { onChange: onVacantFilter, format: v => `${v.toFixed(1)}px` });
 
-  // Non-vacant treatment
-  bindRange('nonvacant-brightness', 'nonVacantBrightness', { onChange: onNonVacantFilter, format: v => v.toFixed(2) });
-  bindRange('nonvacant-contrast', 'nonVacantContrast', { onChange: onNonVacantFilter, format: v => v.toFixed(2) });
-  bindRange('nonvacant-saturation', 'nonVacantSaturation', { onChange: onNonVacantFilter, format: v => v.toFixed(2) });
-  bindRange('nonvacant-hue', 'nonVacantHue', { onChange: onNonVacantFilter, format: v => `${v}°` });
-  bindRange('nonvacant-blur', 'nonVacantBlur', { onChange: onNonVacantFilter, format: v => `${v.toFixed(1)}px` });
 
   // Boundary — outline
   ctl('ctl-outline-enabled').addEventListener('change', (e) => {
@@ -152,17 +145,6 @@ function syncControlsFromState() {
   ctl('ctl-vacant-blur').value = state.vacantBlur;
   val('vacant-blur').textContent = `${state.vacantBlur.toFixed(1)}px`;
 
-  // Non-vacant
-  ctl('ctl-nonvacant-brightness').value = state.nonVacantBrightness;
-  val('nonvacant-brightness').textContent = state.nonVacantBrightness.toFixed(2);
-  ctl('ctl-nonvacant-contrast').value = state.nonVacantContrast;
-  val('nonvacant-contrast').textContent = state.nonVacantContrast.toFixed(2);
-  ctl('ctl-nonvacant-saturation').value = state.nonVacantSaturation;
-  val('nonvacant-saturation').textContent = state.nonVacantSaturation.toFixed(2);
-  ctl('ctl-nonvacant-hue').value = state.nonVacantHue;
-  val('nonvacant-hue').textContent = `${state.nonVacantHue}°`;
-  ctl('ctl-nonvacant-blur').value = state.nonVacantBlur;
-  val('nonvacant-blur').textContent = `${state.nonVacantBlur.toFixed(1)}px`;
 
   // Boundary effects
   ctl('ctl-outline-enabled').checked = state.outlineEnabled;

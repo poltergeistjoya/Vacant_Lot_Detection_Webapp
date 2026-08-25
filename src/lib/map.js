@@ -20,29 +20,11 @@ const CanvasOverlay = L.ImageOverlay.extend({
 });
 
 /**
- * Generate an inverted-alpha version of the mask image. Where the original
- * mask has opaque pixels (vacant), the inverse is transparent, and vice versa.
- * Returns a data URL suitable for CSS mask-image.
- */
-function invertMaskAlpha(img) {
-  const c = document.createElement('canvas');
-  c.width = img.naturalWidth;
-  c.height = img.naturalHeight;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  const imageData = ctx.getImageData(0, 0, c.width, c.height);
-  const d = imageData.data;
-  for (let i = 3; i < d.length; i += 4) {
-    d[i] = 255 - d[i]; // invert alpha
-  }
-  ctx.putImageData(imageData, 0, 0);
-  return c.toDataURL();
-}
-
-/**
- * Creates the Leaflet map with six panes (basemap, vacant, non-vacant,
- * shadow, glow, outline) and boundary overlays. Returns everything
- * callers need to drive treatments.
+ * Creates the Leaflet map with panes for basemap treatment and vacant
+ * area treatment. The basemap pane is the base Esri imagery — filtering
+ * it changes how everything outside the mask looks (i.e. non-vacant areas).
+ * The vacant pane is a second copy of Esri tiles, CSS-masked to mask==1,
+ * so filtering it only affects vacant areas.
  */
 export async function createMap(containerId) {
   const map = L.map(containerId, {
@@ -54,30 +36,28 @@ export async function createMap(containerId) {
 
   L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-  // ── Panes (z-order: basemap < nonVacant < shadow < glow < vacant < outline) ──
-  // Each treatment group gets its own pane so CSS filters are independent.
+  // ── Panes ──
+  // basemapPane: base tiles, filtered = non-vacant treatment
+  // vacantPane: masked tiles, filtered = vacant treatment
+  // shadow/glow/outline: boundary effects
   map.createPane('basemapPane');
-  map.createPane('nonVacantPane');
   map.createPane('shadowPane');
   map.createPane('glowPane');
   map.createPane('vacantPane');
   map.createPane('outlinePane');
   map.getPane('basemapPane').style.zIndex = 200;
-  map.getPane('nonVacantPane').style.zIndex = 300;
   map.getPane('shadowPane').style.zIndex = 340;
   map.getPane('glowPane').style.zIndex = 350;
   map.getPane('vacantPane').style.zIndex = 400;
   map.getPane('outlinePane').style.zIndex = 450;
 
   const basemapPane = map.getPane('basemapPane');
-  const nonVacantPane = map.getPane('nonVacantPane');
   const shadowPane = map.getPane('shadowPane');
   const glowPane = map.getPane('glowPane');
   const vacantPane = map.getPane('vacantPane');
   const outlinePane = map.getPane('outlinePane');
 
   // ── Tile layers ──
-  // Base: targeted by basemap treatment filter
   L.tileLayer(ESRI_BASEMAP_URL, {
     attribution: ESRI_ATTRIBUTION,
     pane: 'basemapPane',
@@ -85,14 +65,7 @@ export async function createMap(containerId) {
     className: 'seamless-tiles',
   }).addTo(map);
 
-  // Non-vacant: clipped to inverted mask
-  L.tileLayer(ESRI_BASEMAP_URL, {
-    pane: 'nonVacantPane',
-    maxZoom: 19,
-    className: 'seamless-tiles',
-  }).addTo(map);
-
-  // Vacant: clipped to mask
+  // Vacant: same tiles, CSS-masked to mask==1
   L.tileLayer(ESRI_BASEMAP_URL, {
     pane: 'vacantPane',
     maxZoom: 19,
@@ -101,20 +74,10 @@ export async function createMap(containerId) {
 
   // ── Load mask + boundary data ──
   const boundary = new VacancyBoundary();
-  const maskImg = new Image();
-  const maskImgLoaded = new Promise((resolve, reject) => {
-    maskImg.onload = () => resolve(maskImg);
-    maskImg.onerror = reject;
-    maskImg.src = MASK_PNG_URL;
-  });
-
-  const [bounds, loadedMaskImg] = await Promise.all([
+  const [bounds] = await Promise.all([
     fetch(MASK_BOUNDS_URL).then(r => r.json()),
-    maskImgLoaded,
     boundary.load(MASK_PNG_URL),
   ]);
-
-  const invertedMaskUrl = invertMaskAlpha(loadedMaskImg);
 
   const maskBounds = L.latLngBounds(
     [bounds.south, bounds.west],
@@ -134,19 +97,11 @@ export async function createMap(containerId) {
     const w = Math.max(0, se.x - nw.x);
     const h = Math.max(0, se.y - nw.y);
 
-    // Vacant pane: original mask
     const vs = vacantPane.style;
     vs.maskImage = vs.webkitMaskImage = `url(${MASK_PNG_URL})`;
     vs.maskRepeat = vs.webkitMaskRepeat = 'no-repeat';
     vs.maskSize = vs.webkitMaskSize = `${w}px ${h}px`;
     vs.maskPosition = vs.webkitMaskPosition = `${nw.x}px ${nw.y}px`;
-
-    // Non-vacant pane: inverted mask
-    const nvs = nonVacantPane.style;
-    nvs.maskImage = nvs.webkitMaskImage = `url(${invertedMaskUrl})`;
-    nvs.maskRepeat = nvs.webkitMaskRepeat = 'no-repeat';
-    nvs.maskSize = nvs.webkitMaskSize = `${w}px ${h}px`;
-    nvs.maskPosition = nvs.webkitMaskPosition = `${nw.x}px ${nw.y}px`;
   }
 
   updateMaskGeometry();
@@ -156,13 +111,6 @@ export async function createMap(containerId) {
     map,
     boundary,
     maskBounds,
-    panes: {
-      basemapPane,
-      vacantPane,
-      nonVacantPane,
-      shadowPane,
-      glowPane,
-      outlinePane,
-    },
+    panes: { basemapPane, vacantPane, shadowPane, glowPane, outlinePane },
   };
 }

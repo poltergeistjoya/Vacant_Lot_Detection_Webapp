@@ -12,29 +12,23 @@ export const DEFAULT_ZOOM = 13;
 export const MASK_PNG_URL = 'mask_overlay.png';
 export const MASK_BOUNDS_URL = 'mask_overlay.json';
 
-// Playground treatment defaults — basemap, vacant, and non-vacant each get
-// the same set of CSS-filter knobs; boundary effects are vacant-only.
+// Playground treatment defaults — basemap (everything outside mask) and
+// vacant (masked area) each get the same CSS-filter knobs; boundary
+// effects are vacant-only.
 export const DEFAULTS = {
-  // Basemap treatment
+  // Basemap treatment (= non-vacant areas, since they show through)
   basemapBrightness: 1,
   basemapContrast: 1,
   basemapSaturation: 1,
   basemapHue: 0,
   basemapBlur: 0,
 
-  // Vacant area treatment
+  // Vacant area treatment (masked)
   vacantBrightness: 1,
   vacantContrast: 1,
   vacantSaturation: 1,
   vacantHue: 0,
   vacantBlur: 0,
-
-  // Non-vacant area treatment
-  nonVacantBrightness: 1,
-  nonVacantContrast: 1,
-  nonVacantSaturation: 1,
-  nonVacantHue: 0,
-  nonVacantBlur: 0,
 
   // Boundary effects (vacant only)
   outlineEnabled: false,

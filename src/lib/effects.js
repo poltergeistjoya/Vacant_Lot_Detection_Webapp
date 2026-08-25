@@ -1,8 +1,7 @@
 /**
- * Apply CSS filter strings to map panes. Three treatment groups:
- *   basemap  — the base Esri tile layer (whole map)
- *   vacant   — clipped to mask == 1
- *   nonVacant — clipped to inverted mask (mask == 0)
+ * Apply CSS filter strings to map panes. Two treatment groups:
+ *   basemap — the base Esri tile layer (everything outside the mask shows through)
+ *   vacant  — clipped to mask == 1, independently filtered
  * Plus boundary chrome (outline/glow/shadow opacity + blur).
  */
 
@@ -22,13 +21,6 @@ export function applyVacantFilter(panes, state) {
   panes.vacantPane.style.filter = filterString(
     state.vacantBrightness, state.vacantContrast,
     state.vacantSaturation, state.vacantHue, state.vacantBlur,
-  );
-}
-
-export function applyNonVacantFilter(panes, state) {
-  panes.nonVacantPane.style.filter = filterString(
-    state.nonVacantBrightness, state.nonVacantContrast,
-    state.nonVacantSaturation, state.nonVacantHue, state.nonVacantBlur,
   );
 }
 
@@ -56,7 +48,6 @@ export function applyAllEffects(panes, boundary, state) {
   renderAllShapes(boundary, state);
   applyBasemapFilter(panes, state);
   applyVacantFilter(panes, state);
-  applyNonVacantFilter(panes, state);
   applyOutlineChrome(panes, state);
   applyGlowChrome(panes, state);
   applyShadowChrome(panes, state);
@@ -66,7 +57,6 @@ export function applyAllEffects(panes, boundary, state) {
 export function clearAllEffects(panes) {
   panes.basemapPane.style.filter = 'none';
   panes.vacantPane.style.filter = 'none';
-  panes.nonVacantPane.style.filter = 'none';
   panes.outlinePane.style.opacity = 0;
   panes.glowPane.style.opacity = 0;
   panes.shadowPane.style.opacity = 0;
