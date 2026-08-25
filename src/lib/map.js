@@ -102,6 +102,12 @@ export async function createMap(containerId) {
     vs.maskRepeat = vs.webkitMaskRepeat = 'no-repeat';
     vs.maskSize = vs.webkitMaskSize = `${w}px ${h}px`;
     vs.maskPosition = vs.webkitMaskPosition = `${nw.x}px ${nw.y}px`;
+    // Panes are 0x0 boxes (their tile children are positioned out of flow),
+    // and mask-clip defaults to border-box — a 0x0 clip region means
+    // nothing in the pane ever becomes visible. Give it a real box that
+    // covers the mask's placed rect so the clip isn't the limiting factor.
+    vs.width = `${Math.max(0, nw.x) + w}px`;
+    vs.height = `${Math.max(0, nw.y) + h}px`;
   }
 
   updateMaskGeometry();
