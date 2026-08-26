@@ -7,6 +7,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 export default {
   root: 'src',
   publicDir: '../data',
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+      },
+    },
+  },
+  optimizeDeps: {
+    exclude: ['maplibre-gl'],
+  },
   build: {
     outDir: '../dist',
     emptyOutDir: true,
@@ -32,7 +43,6 @@ export default {
         }
       });
 
-      // SPA-style fallback: /playground → /playground.html
       server.middlewares.use((req, res, next) => {
         if (req.url === '/playground' || req.url === '/playground/') {
           req.url = '/playground.html';

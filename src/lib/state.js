@@ -1,23 +1,27 @@
-import { DEFAULTS } from './layers.js';
+import {
+  TREATMENT_DEFAULTS, VACANT_EXTRA_DEFAULTS, BOUNDARY_DEFAULTS,
+} from './layers.js';
 
 const STORAGE_KEY = 'vacancy-playground-snapshot';
 const SNAPSHOTS_KEY = 'vacancy-playground-snapshots';
 
 /** Returns a fresh copy of defaults. */
 export function defaultState() {
-  return { ...DEFAULTS };
+  return {
+    bm: { ...TREATMENT_DEFAULTS },
+    vc: { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS },
+    nv: { ...TREATMENT_DEFAULTS },
+    boundary: { ...BOUNDARY_DEFAULTS },
+  };
 }
 
-/** Load the active snapshot from localStorage, or defaults. */
+/** Load the active snapshot from localStorage, or null. */
 export function loadActiveState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return { ...DEFAULTS, ...parsed };
-    }
-  } catch { /* corrupt data */ }
-  return defaultState();
+    if (raw) return JSON.parse(raw);
+  } catch { /* corrupt */ }
+  return null;
 }
 
 /** Persist the active state to localStorage. */
@@ -36,7 +40,7 @@ export function listSnapshots() {
 /** Save a named snapshot. */
 export function saveSnapshot(name, state) {
   const list = listSnapshots();
-  const entry = { name, state: { ...state }, timestamp: Date.now() };
+  const entry = { name, state: JSON.parse(JSON.stringify(state)), timestamp: Date.now() };
   const idx = list.findIndex(s => s.name === name);
   if (idx >= 0) list[idx] = entry;
   else list.push(entry);
@@ -62,11 +66,9 @@ export function exportAllAsJSON(activeState) {
 export function importFromJSON(jsonStr) {
   try {
     const data = JSON.parse(jsonStr);
-    if (!data.active) return null;
-    if (typeof data.active.vacantBrightness !== 'number' &&
-        typeof data.active.insideBrightness !== 'number') return null;
+    if (!data.active || !data.active.bm) return null;
     return {
-      active: { ...DEFAULTS, ...data.active },
+      active: data.active,
       snapshots: Array.isArray(data.snapshots) ? data.snapshots : [],
     };
   } catch { return null; }

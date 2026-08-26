@@ -5,42 +5,42 @@ export const ESRI_ATTRIBUTION =
   'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
 
 export const BRONX_CENTER = [40.8501, -73.8662];
-export const BRONX_CENTER_LNG_LAT = [-73.855, 40.855]; // MapLibre uses [lng, lat]
+export const BRONX_CENTER_LNG_LAT = [-73.855, 40.855];
 export const DEFAULT_ZOOM = 13;
 
 // ── Playground (Leaflet) constants ──────────────────
 export const MASK_PNG_URL = 'mask_overlay.png';
 export const MASK_BOUNDS_URL = 'mask_overlay.json';
 
-// Playground treatment defaults — basemap (everything outside mask) and
-// vacant (masked area) each get the same CSS-filter knobs; boundary
-// effects are vacant-only.
-export const DEFAULTS = {
-  // Basemap treatment (= non-vacant areas, since they show through)
-  basemapBrightness: 1,
-  basemapContrast: 1,
-  basemapSaturation: 1,
-  basemapHue: 0,
-  basemapBlur: 0,
+// Treatment defaults — each group has the same color-op knobs.
+// Keys match the backend query parameter aliases.
+export const TREATMENT_DEFAULTS = {
+  sc: 0,       // sigmoidal contrast
+  sb: 0.5,     // sigmoidal bias
+  g: 1,        // master gamma
+  gr: 1,       // gamma red
+  gg: 1,       // gamma green
+  gb: 1,       // gamma blue
+  sat: 1,      // saturation
+  gray: 0,     // grayscale
+  br: 1,       // brightness
+};
 
-  // Vacant area treatment (masked)
-  vacantBrightness: 1,
-  vacantContrast: 1,
-  vacantSaturation: 1,
-  vacantHue: 0,
-  vacantBlur: 0,
+export const VACANT_EXTRA_DEFAULTS = {
+  tint: '000000',  // tint color hex
+  to: 0,           // tint opacity
+};
 
-  // Boundary effects (vacant only)
+export const BOUNDARY_DEFAULTS = {
   outlineEnabled: false,
   outlineColor: '#ffffff',
   outlineWidth: 3,
   outlineOpacity: 1,
 
-  glowEnabled: false,
-  glowColor: '#ff8c00',
-  glowRadius: 15,
-  glowStrength: 0.8,
-  glowOpacity: 0.8,
+  bloomEnabled: false,
+  bloomColor: '#ff8c00',
+  bloomRadius: 15,
+  bloomIntensity: 0.8,
 
   shadowEnabled: false,
   shadowRadius: 12,

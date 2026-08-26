@@ -330,3 +330,25 @@ details.sub-panel[open] > .sub-panel-heading::before {
 .text-muted {
   color: var(--text-dim);
 }
+
+/* ── Preset dropdown ──────────────────────────────── */
+.preset-row {
+  margin-top: 6px;
+}
+
+.select-input {
+  width: 100%;
+  font-family: var(--font);
+  font-size: 12px;
+  padding: 6px 10px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.select-input:focus {
+  border-color: var(--accent);
+}
