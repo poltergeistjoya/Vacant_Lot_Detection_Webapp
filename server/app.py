@@ -7,6 +7,8 @@ returns processed PNGs.
 
 import hashlib
 import io
+import json
+import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -14,7 +16,7 @@ from typing import Optional
 import httpx
 import numpy as np
 from color_operations import sigmoidal, gamma, saturation
-from fastapi import FastAPI, Query, Response
+from fastapi import Body, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 
@@ -23,7 +25,7 @@ app = FastAPI(title="Vacancy Playground API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -156,8 +158,6 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 @lru_cache(maxsize=1)
 def load_mask_and_bounds():
     """Load the vacancy mask PNG and its bounds. Cached."""
-    import json
-
     mask_path = DATA_DIR / "mask_overlay.png"
     bounds_path = DATA_DIR / "mask_overlay.json"
 
@@ -364,6 +364,63 @@ async def nonvacant_tile(
 def list_presets():
     """Return available treatment presets."""
     return PRESETS
+
+
+# ── Snapshot persistence ─────────────────────────────
+# Playground state (the active working state + named snapshots) is kept
+# in a JSON file on disk instead of browser localStorage, so it survives
+# clearing browser data and is inspectable/portable on this machine.
+
+SNAPSHOTS_PATH = DATA_DIR / "playground_snapshots.json"
+
+
+def _read_snapshots_file() -> dict:
+    if not SNAPSHOTS_PATH.exists():
+        return {"active": None, "snapshots": []}
+    return json.loads(SNAPSHOTS_PATH.read_text())
+
+
+def _write_snapshots_file(data: dict) -> None:
+    SNAPSHOTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SNAPSHOTS_PATH.write_text(json.dumps(data, indent=2))
+
+
+@app.get("/api/snapshots")
+def get_snapshots():
+    """Return {active, snapshots} — the full persisted playground state."""
+    return _read_snapshots_file()
+
+
+@app.put("/api/snapshots/active")
+def put_active_snapshot(state: dict = Body(...)):
+    """Overwrite the active working state (auto-saved on every control change)."""
+    data = _read_snapshots_file()
+    data["active"] = state
+    _write_snapshots_file(data)
+    return {"ok": True}
+
+
+@app.post("/api/snapshots")
+def post_snapshot(payload: dict = Body(...)):
+    """Save (or overwrite, by name) a named snapshot."""
+    name = payload.get("name")
+    state = payload.get("state")
+    if not name or state is None:
+        raise HTTPException(400, "name and state are required")
+    data = _read_snapshots_file()
+    data["snapshots"] = [s for s in data["snapshots"] if s["name"] != name]
+    data["snapshots"].append({"name": name, "state": state, "timestamp": time.time() * 1000})
+    _write_snapshots_file(data)
+    return {"ok": True}
+
+
+@app.delete("/api/snapshots/{name}")
+def delete_snapshot_endpoint(name: str):
+    """Delete a named snapshot."""
+    data = _read_snapshots_file()
+    data["snapshots"] = [s for s in data["snapshots"] if s["name"] != name]
+    _write_snapshots_file(data)
+    return {"ok": True}
 
 
 # ── Presets ──────────────────────────────────────────

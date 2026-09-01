@@ -1,75 +1,77 @@
-import {
-  TREATMENT_DEFAULTS, VACANT_EXTRA_DEFAULTS, BOUNDARY_DEFAULTS,
-} from './layers.js';
+// Playground state persistence — backed by a JSON file on disk
+// (data/playground_snapshots.json) via the FastAPI backend, so snapshots
+// survive clearing browser data and are portable across browsers on this
+// machine. See server/app.py's /api/snapshots endpoints.
 
-const STORAGE_KEY = 'vacancy-playground-snapshot';
-const SNAPSHOTS_KEY = 'vacancy-playground-snapshots';
+const API_BASE = '/api/snapshots';
 
-/** Returns a fresh copy of defaults. */
-export function defaultState() {
-  return {
-    bm: { ...TREATMENT_DEFAULTS },
-    vc: { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS },
-    nv: { ...TREATMENT_DEFAULTS },
-    boundary: { ...BOUNDARY_DEFAULTS },
-  };
-}
-
-/** Load the active snapshot from localStorage, or null. */
-export function loadActiveState() {
+/** Load the active working state from disk, or null. */
+export async function loadActiveState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch { /* corrupt */ }
-  return null;
+    const resp = await fetch(API_BASE);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.active || null;
+  } catch {
+    return null;
+  }
 }
 
-/** Persist the active state to localStorage. */
+/** Persist the active working state to disk. Fire-and-forget. */
 export function saveActiveState(state) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  return fetch(`${API_BASE}/active`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(state),
+  }).catch(() => { /* backend may be down; state stays in memory */ });
 }
 
 /** List saved named snapshots: [{name, state, timestamp}] */
-export function listSnapshots() {
+export async function listSnapshots() {
   try {
-    const raw = localStorage.getItem(SNAPSHOTS_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch { return []; }
+    const resp = await fetch(API_BASE);
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    return data.snapshots || [];
+  } catch {
+    return [];
+  }
 }
 
-/** Save a named snapshot. */
+/** Save (or overwrite, by name) a named snapshot. */
 export function saveSnapshot(name, state) {
-  const list = listSnapshots();
-  const entry = { name, state: JSON.parse(JSON.stringify(state)), timestamp: Date.now() };
-  const idx = list.findIndex(s => s.name === name);
-  if (idx >= 0) list[idx] = entry;
-  else list.push(entry);
-  localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(list));
+  return fetch(API_BASE, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, state }),
+  });
 }
 
 /** Delete a named snapshot. */
 export function deleteSnapshot(name) {
-  const list = listSnapshots().filter(s => s.name !== name);
-  localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify(list));
+  return fetch(`${API_BASE}/${encodeURIComponent(name)}`, { method: 'DELETE' });
 }
 
 /** Export all snapshots + active state as a JSON string. */
-export function exportAllAsJSON(activeState) {
+export async function exportAllAsJSON(activeState) {
   return JSON.stringify({
     active: activeState,
-    snapshots: listSnapshots(),
+    snapshots: await listSnapshots(),
     exportedAt: new Date().toISOString(),
   }, null, 2);
 }
 
-/** Import from a JSON string. Returns {active, snapshots} or null. */
-export function importFromJSON(jsonStr) {
+/** Import from a JSON string, pushing snapshots to disk. Returns {active, snapshots} or null. */
+export async function importFromJSON(jsonStr) {
   try {
     const data = JSON.parse(jsonStr);
     if (!data.active || !data.active.bm) return null;
-    return {
-      active: data.active,
-      snapshots: Array.isArray(data.snapshots) ? data.snapshots : [],
-    };
-  } catch { return null; }
+    const snapshots = Array.isArray(data.snapshots) ? data.snapshots : [];
+    for (const s of snapshots) {
+      await saveSnapshot(s.name, s.state);
+    }
+    return { active: data.active, snapshots };
+  } catch {
+    return null;
+  }
 }

@@ -3,7 +3,7 @@ import {
   TREATMENT_DEFAULTS, VACANT_EXTRA_DEFAULTS, BOUNDARY_DEFAULTS,
 } from './lib/layers.js';
 import {
-  loadActiveState, saveActiveState, defaultState,
+  loadActiveState, saveActiveState,
   listSnapshots, saveSnapshot, deleteSnapshot,
   exportAllAsJSON, importFromJSON,
 } from './lib/state.js';
@@ -307,9 +307,9 @@ async function loadPresets() {
 }
 
 // ── Snapshots UI ────────────────────────────────────
-function renderSnapshotList() {
+async function renderSnapshotList() {
   const list = ctl('snapshot-list');
-  const snapshots = listSnapshots();
+  const snapshots = await listSnapshots();
   if (snapshots.length === 0) {
     list.innerHTML = '<div class="text-muted" style="font-size:11px;padding:4px 0;">No saved snapshots</div>';
     return;
@@ -338,26 +338,26 @@ function renderSnapshotList() {
   });
 
   list.querySelectorAll('.snapshot-delete').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      deleteSnapshot(btn.dataset.name);
+      await deleteSnapshot(btn.dataset.name);
       renderSnapshotList();
     });
   });
 }
 
 function wireSnapshots() {
-  ctl('snapshot-save-btn').addEventListener('click', () => {
+  ctl('snapshot-save-btn').addEventListener('click', async () => {
     const nameInput = ctl('snapshot-name');
     const name = nameInput.value.trim();
     if (!name) return;
-    saveSnapshot(name, state);
+    await saveSnapshot(name, state);
     nameInput.value = '';
     renderSnapshotList();
   });
 
-  ctl('export-btn').addEventListener('click', () => {
-    const json = exportAllAsJSON(state);
+  ctl('export-btn').addEventListener('click', async () => {
+    const json = await exportAllAsJSON(state);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -373,8 +373,8 @@ function wireSnapshots() {
     const file = e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
-      const result = importFromJSON(reader.result);
+    reader.onload = async () => {
+      const result = await importFromJSON(reader.result);
       if (!result) { alert('Invalid snapshot file.'); return; }
       Object.assign(state, buildDefaultState(), result.active);
       syncControlsFromState();
@@ -382,10 +382,7 @@ function wireSnapshots() {
       updateVacantTiles();
       updateNonVacantTiles();
       applyBoundaryEffects();
-      if (result.snapshots.length) {
-        for (const s of result.snapshots) saveSnapshot(s.name, s.state);
-        renderSnapshotList();
-      }
+      if (result.snapshots.length) renderSnapshotList();
       exitCompare();
     };
     reader.readAsText(file);
@@ -403,7 +400,7 @@ async function init() {
   mapCtl = result;
 
   // Load state or defaults
-  const saved = loadActiveState();
+  const saved = await loadActiveState();
   state = buildDefaultState();
   if (saved && saved.bm) {
     Object.assign(state.bm, saved.bm);

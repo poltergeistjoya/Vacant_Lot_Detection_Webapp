@@ -4,6 +4,7 @@ dist/
 tiles/
 data/mask_overlay.png
 data/mask_overlay.json
+data/playground_snapshots.json
 .DS_Store
 *.pyc
 __pycache__/

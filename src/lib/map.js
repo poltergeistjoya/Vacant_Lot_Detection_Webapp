@@ -86,13 +86,6 @@ export async function createMap(containerId) {
   const vacantPane = map.getPane('vacantPane');
   const outlinePane = map.getPane('outlinePane');
 
-  // Fix mask-clip for panes that use CSS masks
-  for (const pane of [vacantPane, nonVacantPane]) {
-    const s = pane.style;
-    s.width = '100%';
-    s.height = '100%';
-  }
-
   // ── Tile layers ──
   // Start with plain Esri tiles; playground.js will swap URLs with params
   const basemapLayer = L.tileLayer(ESRI_BASEMAP_URL, {
@@ -149,8 +142,30 @@ export async function createMap(containerId) {
     const w = Math.max(0, se.x - nw.x);
     const h = Math.max(0, se.y - nw.y);
 
-    // Vacant pane: original mask
+    // Panes are 0x0 boxes (their .leaflet-map-pane ancestor is too, so
+    // width/height:100% resolves to 0% of nothing) and mask-clip defaults
+    // to border-box, so without an explicit box the mask has a 0x0 clip
+    // region and nothing in the pane is ever visible.
+    //
+    // The box can't be sized to nw.x/nw.y + w/h: those go negative once
+    // zoomed in (the mask's geo corner shifts left/above the pane's fixed
+    // (0,0) origin — panes can't be repositioned to compensate without
+    // dragging their tile children out of alignment, since tiles are
+    // positioned relative to the pane's own box). A box anchored at (0,0)
+    // can only grow right/down, so a negative nw pushes the mask's reveal
+    // region entirely outside it.
+    //
+    // Instead, size the box to the current viewport (map.getSize()): the
+    // container itself clips to that (overflow: hidden), so nothing further
+    // out is visible anyway, and the box covers whatever of the mask does
+    // land on screen regardless of which direction nw.x/nw.y have drifted.
+    const size = map.getSize();
+    const boxW = `${size.x}px`;
+    const boxH = `${size.y}px`;
+
     const vs = vacantPane.style;
+    vs.width = boxW;
+    vs.height = boxH;
     vs.maskImage = vs.webkitMaskImage = `url(${MASK_PNG_URL})`;
     vs.maskRepeat = vs.webkitMaskRepeat = 'no-repeat';
     vs.maskSize = vs.webkitMaskSize = `${w}px ${h}px`;
@@ -158,6 +173,8 @@ export async function createMap(containerId) {
 
     // Non-vacant pane: inverted mask
     const nvs = nonVacantPane.style;
+    nvs.width = boxW;
+    nvs.height = boxH;
     nvs.maskImage = nvs.webkitMaskImage = `url(${invertedMaskUrl})`;
     nvs.maskRepeat = nvs.webkitMaskRepeat = 'no-repeat';
     nvs.maskSize = nvs.webkitMaskSize = `${w}px ${h}px`;
