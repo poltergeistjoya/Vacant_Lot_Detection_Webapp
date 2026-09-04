@@ -10,6 +10,7 @@ export const DEFAULT_ZOOM = 13;
 
 // ── Playground (Leaflet) constants ──────────────────
 export const MASK_PNG_URL = 'mask_overlay.png';
+export const NONVACANT_MASK_PNG_URL = 'nonvacant_mask_overlay.png';
 export const MASK_BOUNDS_URL = 'mask_overlay.json';
 
 // Treatment defaults — each group has the same color-op knobs.
@@ -72,10 +73,4 @@ export const CHECKPOINTS = [
 export const DEFAULT_THRESHOLD = 0.298;
 export const GOOD_ZONE = [0.298, 0.450];
 
-export const TILE_BASE = '/tiles';
-
-export function tileUrl(type, tStr) {
-  return `${TILE_BASE}/${tStr}/${type}/{z}/{x}/{y}.png`;
-}
-
-export const NAIP_TILE_URL = `${TILE_BASE}/naip/{z}/{x}/{y}.png`;
+export const NAIP_TILE_URL = '/tiles/naip/{z}/{x}/{y}.png';

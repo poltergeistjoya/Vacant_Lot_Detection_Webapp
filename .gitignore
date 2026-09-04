@@ -3,7 +3,9 @@ node_modules/
 dist/
 tiles/
 data/mask_overlay.png
+data/nonvacant_mask_overlay.png
 data/mask_overlay.json
+data/masks/
 data/playground_snapshots.json
 .DS_Store
 *.pyc

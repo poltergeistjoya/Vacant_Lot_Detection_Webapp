@@ -2,7 +2,7 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import {
   ESRI_BASEMAP_URL, ESRI_ATTRIBUTION, BRONX_CENTER_LNG_LAT,
-  DEFAULT_ZOOM, CHECKPOINTS, DEFAULT_THRESHOLD, tileUrl, NAIP_TILE_URL,
+  DEFAULT_ZOOM, CHECKPOINTS, DEFAULT_THRESHOLD, NAIP_TILE_URL,
 } from './lib/layers.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
@@ -12,22 +12,11 @@ const IS_DEV = new URLSearchParams(window.location.search).has('dev');
 const defaultCP = CHECKPOINTS[getDefaultIndex()];
 let currentTStr = defaultCP.tStr;
 
-// ── Layer definitions ───────────────────────────────
-// Core layers always available; dev layers only with ?dev
-const LAYERS = [
-  { id: 'naip',    label: 'NAIP Imagery',   defaultOn: false, tooltip: TOOLTIPS.naip },
-  { id: 'overlay', label: 'Vacant Overlay', defaultOn: true,  tooltip: TOOLTIPS.overlay },
-];
-
-const DEV_LAYERS = [
-  { id: 'error', label: 'Error Map', defaultOn: false, tooltip: TOOLTIPS.error },
-  { id: 'roads', label: 'Roads',     defaultOn: true,  tooltip: TOOLTIPS.roads },
-  { id: 'parks', label: 'Parks',     defaultOn: false, tooltip: TOOLTIPS.parks },
-];
-
-const allLayers = IS_DEV ? [...LAYERS, ...DEV_LAYERS] : LAYERS;
-const layerVisibility = {};
-allLayers.forEach(l => { layerVisibility[l.id] = l.defaultOn; });
+// ── Layer state ────────────────────────────────────
+const layerState = {
+  overlay: true,
+  naip: false,
+};
 
 // ── Map ─────────────────────────────────────────────
 const map = new maplibregl.Map({
@@ -35,14 +24,14 @@ const map = new maplibregl.Map({
   style: {
     version: 8,
     sources: {
-      esri: {
+      product: {
         type: 'raster',
-        tiles: [ESRI_BASEMAP_URL],
+        tiles: [productTileUrl()],
         tileSize: 256,
         attribution: ESRI_ATTRIBUTION,
       },
     },
-    layers: [{ id: 'esri', type: 'raster', source: 'esri' }],
+    layers: [{ id: 'product', type: 'raster', source: 'product' }],
   },
   center: BRONX_CENTER_LNG_LAT,
   zoom: DEFAULT_ZOOM,
@@ -51,104 +40,59 @@ const map = new maplibregl.Map({
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
-// ── Sources & layers on load ────────────────────────
-map.on('load', () => {
-  addSources();
-  addMapLayers();
-  buildLayerPanel();
-  loadThresholds();
-});
-
-function addSources() {
-  map.addSource('naip', {
-    type: 'raster',
-    tiles: [NAIP_TILE_URL],
-    tileSize: 256,
-  });
-
-  map.addSource('overlay', {
-    type: 'raster',
-    tiles: [tileUrl('overlay', currentTStr)],
-    tileSize: 256,
-  });
-
-  if (IS_DEV) {
-    map.addSource('error', {
-      type: 'raster',
-      tiles: [tileUrl('error', currentTStr)],
-      tileSize: 256,
-    });
-
-    map.addSource('roads', {
-      type: 'geojson',
-      data: 'roads.geojson',
-    });
-
-    map.addSource('parks', {
-      type: 'geojson',
-      data: 'parks.geojson',
-    });
+// ── Tile URL logic ─────────────────────────────────
+function productTileUrl() {
+  if (!layerState.overlay) {
+    return layerState.naip
+      ? NAIP_TILE_URL
+      : ESRI_BASEMAP_URL;
   }
+  return `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`;
 }
 
-function addMapLayers() {
-  map.addLayer({
-    id: 'naip',
+function updateTileSource() {
+  const url = productTileUrl();
+  const wasVisible = map.getLayoutProperty('product', 'visibility') !== 'none';
+
+  map.removeLayer('product');
+  map.removeSource('product');
+
+  map.addSource('product', {
     type: 'raster',
-    source: 'naip',
-    layout: { visibility: layerVisibility.naip ? 'visible' : 'none' },
+    tiles: [url],
+    tileSize: 256,
+    attribution: ESRI_ATTRIBUTION,
   });
 
   map.addLayer({
-    id: 'overlay',
+    id: 'product',
     type: 'raster',
-    source: 'overlay',
-    layout: { visibility: layerVisibility.overlay ? 'visible' : 'none' },
-    paint: { 'raster-opacity': 1, 'raster-opacity-transition': { duration: 150 } },
-  });
+    source: 'product',
+    layout: { visibility: wasVisible ? 'visible' : 'none' },
+  }, getDevInsertBefore());
+}
 
-  if (IS_DEV) {
-    map.addLayer({
-      id: 'error',
-      type: 'raster',
-      source: 'error',
-      layout: { visibility: layerVisibility.error ? 'visible' : 'none' },
-      paint: { 'raster-opacity': 1, 'raster-opacity-transition': { duration: 150 } },
-    });
-
-    map.addLayer({
-      id: 'roads',
-      type: 'line',
-      source: 'roads',
-      layout: { visibility: layerVisibility.roads ? 'visible' : 'none' },
-      paint: {
-        'line-color': '#141414',
-        'line-opacity': 0.55,
-        'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5],
-      },
-    });
-
-    map.addLayer({
-      id: 'parks-fill',
-      type: 'fill',
-      source: 'parks',
-      paint: { 'fill-color': '#2ecc71', 'fill-opacity': 0.25 },
-      layout: { visibility: layerVisibility.parks ? 'visible' : 'none' },
-    });
-
-    map.addLayer({
-      id: 'parks-line',
-      type: 'line',
-      source: 'parks',
-      paint: { 'line-color': '#27ae60', 'line-width': 1.5 },
-      layout: { visibility: layerVisibility.parks ? 'visible' : 'none' },
-    });
+function getDevInsertBefore() {
+  if (!IS_DEV) return undefined;
+  const devOrder = ['error', 'roads', 'parks-fill'];
+  for (const id of devOrder) {
+    if (map.getLayer(id)) return id;
   }
+  return undefined;
 }
 
 // ── Layer panel ─────────────────────────────────────
+const LAYERS = [
+  { id: 'naip',    label: 'NAIP Imagery',  defaultOn: false, tooltip: TOOLTIPS.naip },
+  { id: 'overlay', label: 'Vacant Overlay', defaultOn: true,  tooltip: TOOLTIPS.overlay },
+];
+
 function buildLayerPanel() {
   const panel = document.getElementById('layer-panel');
+  const allLayers = IS_DEV
+    ? [...LAYERS, { id: 'error', label: 'Error Map', defaultOn: false, tooltip: TOOLTIPS.error }]
+    : LAYERS;
+
   allLayers.forEach(l => {
     const row = document.createElement('div');
     row.className = 'layer-row';
@@ -156,7 +100,9 @@ function buildLayerPanel() {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.id = `layer-${l.id}`;
-    cb.checked = layerVisibility[l.id];
+    cb.checked = l.id === 'overlay' ? layerState.overlay
+               : l.id === 'naip' ? layerState.naip
+               : l.defaultOn;
     cb.addEventListener('change', () => toggleLayer(l.id, cb.checked));
 
     const label = document.createElement('label');
@@ -174,61 +120,72 @@ function buildLayerPanel() {
 }
 
 function toggleLayer(id, visible) {
-  layerVisibility[id] = visible;
-  const vis = visible ? 'visible' : 'none';
-  if (id === 'parks') {
-    map.setLayoutProperty('parks-fill', 'visibility', vis);
-    map.setLayoutProperty('parks-line', 'visibility', vis);
-  } else {
-    map.setLayoutProperty(id, 'visibility', vis);
+  if (id === 'overlay' || id === 'naip') {
+    layerState[id] = visible;
+    updateTileSource();
+  } else if (IS_DEV) {
+    const vis = visible ? 'visible' : 'none';
+    if (id === 'parks') {
+      map.setLayoutProperty('parks-fill', 'visibility', vis);
+      map.setLayoutProperty('parks-line', 'visibility', vis);
+    } else if (map.getLayer(id)) {
+      map.setLayoutProperty(id, 'visibility', vis);
+    }
   }
+}
+
+// ── Dev-only layers ─────────────────────────────────
+function addDevLayers() {
+  if (!IS_DEV) return;
+
+  map.addSource('error', {
+    type: 'raster',
+    tiles: [`/tiles/${currentTStr}/error/{z}/{x}/{y}.png`],
+    tileSize: 256,
+  });
+  map.addLayer({
+    id: 'error',
+    type: 'raster',
+    source: 'error',
+    layout: { visibility: 'none' },
+    paint: { 'raster-opacity': 1 },
+  });
+
+  map.addSource('roads', { type: 'geojson', data: 'roads.geojson' });
+  map.addLayer({
+    id: 'roads',
+    type: 'line',
+    source: 'roads',
+    layout: { visibility: 'visible' },
+    paint: {
+      'line-color': '#141414',
+      'line-opacity': 0.55,
+      'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5],
+    },
+  });
 }
 
 // ── Threshold change ────────────────────────────────
 function onThresholdChange(cp) {
   currentTStr = cp.tStr;
-  swapRasterSource('overlay', tileUrl('overlay', cp.tStr));
-  if (IS_DEV) swapRasterSource('error', tileUrl('error', cp.tStr));
+  updateTileSource();
 }
 
-function swapRasterSource(layerId, newUrl) {
-  const wasVisible = map.getLayoutProperty(layerId, 'visibility') === 'visible';
-  map.removeLayer(layerId);
-  map.removeSource(layerId);
+// ── Init ────────────────────────────────────────────
+map.on('load', () => {
+  addDevLayers();
+  buildLayerPanel();
+  loadThresholds();
 
-  map.addSource(layerId, {
-    type: 'raster',
-    tiles: [newUrl],
-    tileSize: 256,
-  });
-
-  const layerDef = {
-    id: layerId,
-    type: 'raster',
-    source: layerId,
-    layout: { visibility: wasVisible ? 'visible' : 'none' },
-    paint: { 'raster-opacity': 1, 'raster-opacity-transition': { duration: 150 } },
-  };
-
-  const beforeId = getInsertBefore(layerId);
-  map.addLayer(layerDef, beforeId);
-}
-
-function getInsertBefore(layerId) {
-  const order = IS_DEV
-    ? ['naip', 'overlay', 'error', 'roads', 'parks-fill']
-    : ['naip', 'overlay'];
-  const idx = order.indexOf(layerId);
-  for (let i = idx + 1; i < order.length; i++) {
-    if (map.getLayer(order[i])) return order[i];
+  // Hide error legend in non-dev mode
+  if (!IS_DEV) {
+    const legend = document.querySelector('.sidebar-section:last-child');
+    if (legend) legend.style.display = 'none';
   }
-  return undefined;
-}
+});
 
-// ── Init slider ─────────────────────────────────────
 initSlider(document.getElementById('slider-container'), onThresholdChange);
 
-// ── Load thresholds.json ────────────────────────────
 async function loadThresholds() {
   try {
     const resp = await fetch('thresholds.json');

@@ -5,13 +5,12 @@ mask-based regional treatment (basemap / vacant / non-vacant), and
 returns processed PNGs.
 """
 
-import hashlib
 import io
 import json
+import math
 import time
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 import httpx
 import numpy as np
@@ -122,55 +121,127 @@ def array_to_png(arr: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
-def add_bloom(arr: np.ndarray, radius: float, intensity: float,
-              color_r: int, color_g: int, color_b: int,
-              mask: Optional[np.ndarray] = None) -> np.ndarray:
-    """Apply bloom effect — Gaussian blur of bright mask-edge pixels,
-    composited additively."""
-    from scipy.ndimage import gaussian_filter
-
-    if mask is None or radius <= 0 or intensity <= 0:
-        return arr
-
-    # Create edge from mask
-    from scipy.ndimage import binary_dilation, binary_erosion
-    edge = binary_dilation(mask, iterations=2) & ~binary_erosion(mask, iterations=1)
-
-    # Color the edge
-    color = np.array([color_r, color_g, color_b], dtype=np.float64).reshape(3, 1, 1) / 255.0
-    edge_f = edge.astype(np.float64)
-    bloom_layer = color * edge_f[np.newaxis, :, :]
-
-    # Blur it
-    for c in range(3):
-        bloom_layer[c] = gaussian_filter(bloom_layer[c], sigma=radius)
-
-    # Additive composite
-    arr = arr + bloom_layer * intensity
-    return np.clip(arr, 0, 1)
-
-
-# ── Mask loading ─────────────────────────────────────
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
+# ── Product tile compositing ─────────────────────────
+# Hardcoded treatments from the "final_vacant_highlight_best" snapshot.
 
-@lru_cache(maxsize=1)
-def load_mask_and_bounds():
-    """Load the vacancy mask PNG and its bounds. Cached."""
-    mask_path = DATA_DIR / "mask_overlay.png"
-    bounds_path = DATA_DIR / "mask_overlay.json"
+PRODUCT_BM = dict(grayscale=0.6, brightness=0.8)
+PRODUCT_VC = dict(
+    sig_contrast=6, sig_bias=0.38, gam_master=1.11,
+    gam_r=1.08, gam_g=1.0, gam_b=1.26,
+    sat=1.8, brightness=0.83,
+)
+PRODUCT_NV = dict(grayscale=1.0, brightness=0.52)
 
-    if not mask_path.exists():
+MASKS_DIR = DATA_DIR / "masks"
+
+
+def _lonlat_to_mercator(lon, lat):
+    x = lon * 20037508.34 / 180.0
+    y = math.log(math.tan(math.pi / 4 + math.radians(lat) / 2)) * 20037508.34 / math.pi
+    return x, y
+
+
+def _tile_to_mercator_bounds(z, x, y):
+    circ = 40075016.686
+    tile_size = circ / (2 ** z)
+    origin = circ / 2
+    left = x * tile_size - origin
+    right = (x + 1) * tile_size - origin
+    top = origin - y * tile_size
+    bottom = origin - (y + 1) * tile_size
+    return left, bottom, right, top
+
+
+@lru_cache(maxsize=8)
+def _load_product_masks(threshold_str: str):
+    """Load vacant + non-vacant mask PNGs and their Mercator bounds."""
+    d = MASKS_DIR / threshold_str
+    vacant_path = d / "vacant.png"
+    nonvacant_path = d / "nonvacant.png"
+    bounds_path = d / "bounds.json"
+
+    if not vacant_path.exists():
+        return None
+
+    bounds = json.loads(bounds_path.read_text())
+    ml, mb = _lonlat_to_mercator(bounds["west"], bounds["south"])
+    mr, mt = _lonlat_to_mercator(bounds["east"], bounds["north"])
+
+    vacant_arr = (np.array(Image.open(vacant_path))[:, :, 3] > 127)
+    nonvacant_arr = (np.array(Image.open(nonvacant_path))[:, :, 3] > 127)
+
+    return {
+        "vacant": vacant_arr,
+        "nonvacant": nonvacant_arr,
+        "bounds": (ml, mb, mr, mt),
+        "shape": vacant_arr.shape,
+    }
+
+
+def _get_tile_masks(z, x, y, threshold_str):
+    """Return (vacant_mask, nonvacant_mask) resized to 256x256 for this tile.
+
+    Returns (None, None) if the tile is fully outside the mask extent.
+    """
+    masks = _load_product_masks(threshold_str)
+    if masks is None:
         return None, None
 
-    img = Image.open(mask_path)
-    # Alpha channel is the mask: opaque = vacant
-    arr = np.array(img)
-    mask = arr[:, :, 3] > 127  # bool (H, W)
+    ml, mb, mr, mt = masks["bounds"]
+    tl, tb, tr, tt = _tile_to_mercator_bounds(z, x, y)
 
-    bounds = json.loads(bounds_path.read_text()) if bounds_path.exists() else None
-    return mask, bounds
+    if tr <= ml or tl >= mr or tt <= mb or tb >= mt:
+        return None, None
+
+    h, w = masks["shape"]
+    mx_per_px = (mr - ml) / w
+    my_per_px = (mt - mb) / h
+
+    px_left = (tl - ml) / mx_per_px
+    px_right = (tr - ml) / mx_per_px
+    px_top = (mt - tt) / my_per_px
+    px_bottom = (mt - tb) / my_per_px
+
+    # Clamp to mask bounds
+    src_left = max(0, int(math.floor(px_left)))
+    src_top = max(0, int(math.floor(px_top)))
+    src_right = min(w, int(math.ceil(px_right)))
+    src_bottom = min(h, int(math.ceil(px_bottom)))
+
+    if src_right <= src_left or src_bottom <= src_top:
+        return None, None
+
+    # Crop and resize to 256x256
+    # Compute destination rect (where in the 256x256 tile this crop lands)
+    dst_left = max(0, (src_left - px_left) / (px_right - px_left) * 256)
+    dst_top = max(0, (src_top - px_top) / (px_bottom - px_top) * 256)
+    dst_right = min(256, (src_right - px_left) / (px_right - px_left) * 256)
+    dst_bottom = min(256, (src_top - px_top + (src_bottom - src_top)) / (px_bottom - px_top) * 256)
+    # Simpler: resize the cropped region to fill the destination rect
+    dst_w = max(1, int(round(dst_right - dst_left)))
+    dst_h = max(1, int(round(dst_bottom - dst_top)))
+
+    vacant_crop = masks["vacant"][src_top:src_bottom, src_left:src_right]
+    nonvacant_crop = masks["nonvacant"][src_top:src_bottom, src_left:src_right]
+
+    vacant_resized = np.array(
+        Image.fromarray(vacant_crop.astype(np.uint8) * 255).resize((dst_w, dst_h), Image.NEAREST)
+    ) > 127
+    nonvacant_resized = np.array(
+        Image.fromarray(nonvacant_crop.astype(np.uint8) * 255).resize((dst_w, dst_h), Image.NEAREST)
+    ) > 127
+
+    # Place into 256x256 tile
+    vacant_tile = np.zeros((256, 256), dtype=bool)
+    nonvacant_tile = np.zeros((256, 256), dtype=bool)
+    dl, dt = int(round(dst_left)), int(round(dst_top))
+    vacant_tile[dt:dt + dst_h, dl:dl + dst_w] = vacant_resized
+    nonvacant_tile[dt:dt + dst_h, dl:dl + dst_w] = nonvacant_resized
+
+    return vacant_tile, nonvacant_tile
 
 
 # ── API endpoints ────────────────────────────────────
@@ -244,14 +315,6 @@ async def processed_tile(
         gam_master=bm_gamma, gam_r=bm_gamma_r, gam_g=bm_gamma_g, gam_b=bm_gamma_b,
         sat=bm_saturation, grayscale=bm_grayscale, brightness=bm_brightness,
     )
-
-    # TODO: Apply per-region treatments when we can map tile coords to mask pixels.
-    # For now, vacant/non-vacant treatments are applied if any non-default params
-    # are set, using the mask overlay. This requires computing the intersection
-    # of the tile's geographic bounds with the mask bounds.
-    #
-    # For the initial version, we apply vacant/non-vacant as full-tile effects
-    # (the CSS mask on the frontend still handles the spatial clipping).
 
     # Parse tint color
     tc = vc_tint_color.lstrip("#")
@@ -358,6 +421,36 @@ async def nonvacant_tile(
     png = array_to_png(result)
     return Response(content=png, media_type="image/png",
                     headers={"Cache-Control": "public, max-age=300"})
+
+
+@app.get("/api/tile/product/{z}/{x}/{y}.png")
+async def product_tile(
+    z: int, x: int, y: int,
+    t: str = Query("t0298"),
+):
+    """Return a composited tile with basemap/vacant/non-vacant treatments baked in."""
+    tile_bytes = await fetch_esri_tile(z, x, y)
+    arr = tile_bytes_to_array(tile_bytes)
+
+    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t)
+
+    if vacant_mask is None:
+        # Tile is outside the mask — apply basemap treatment only
+        result = apply_color_ops(arr, **PRODUCT_BM)
+        return Response(content=array_to_png(result), media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+    bm_arr = apply_color_ops(arr.copy(), **PRODUCT_BM)
+    vc_arr = apply_color_ops(arr.copy(), **PRODUCT_VC)
+    nv_arr = apply_color_ops(arr.copy(), **PRODUCT_NV)
+
+    # Composite: vacant pixels get vc, non-vacant get nv, rest get bm
+    result = bm_arr
+    result[:, nonvacant_mask] = nv_arr[:, nonvacant_mask]
+    result[:, vacant_mask] = vc_arr[:, vacant_mask]
+
+    return Response(content=array_to_png(result), media_type="image/png",
+                    headers={"Cache-Control": "public, max-age=3600"})
 
 
 @app.get("/api/presets")

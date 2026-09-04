@@ -2,7 +2,7 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
   ESRI_BASEMAP_URL, ESRI_ATTRIBUTION, BRONX_CENTER, DEFAULT_ZOOM,
-  MASK_PNG_URL, MASK_BOUNDS_URL,
+  MASK_PNG_URL, NONVACANT_MASK_PNG_URL, MASK_BOUNDS_URL,
 } from './layers.js';
 import { VacancyBoundary } from './overlay.js';
 
@@ -19,22 +19,19 @@ const CanvasOverlay = L.ImageOverlay.extend({
   },
 });
 
-/**
- * Generate an inverted-alpha version of the mask image.
- */
-function invertMaskAlpha(img) {
-  const c = document.createElement('canvas');
-  c.width = img.naturalWidth;
-  c.height = img.naturalHeight;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  const imageData = ctx.getImageData(0, 0, c.width, c.height);
-  const d = imageData.data;
-  for (let i = 3; i < d.length; i += 4) {
-    d[i] = 255 - d[i];
-  }
-  ctx.putImageData(imageData, 0, 0);
-  return c.toDataURL();
+function loadImageCanvas(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      resolve(c);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
 }
 
 /**
@@ -109,20 +106,12 @@ export async function createMap(containerId) {
 
   // ── Load mask + boundary ──
   const boundary = new VacancyBoundary();
-  const maskImg = new Image();
-  const maskImgLoaded = new Promise((resolve, reject) => {
-    maskImg.onload = () => resolve(maskImg);
-    maskImg.onerror = reject;
-    maskImg.src = MASK_PNG_URL;
-  });
 
-  const [bounds, loadedMaskImg] = await Promise.all([
+  const [bounds, , nonvacantSrcCanvas] = await Promise.all([
     fetch(MASK_BOUNDS_URL).then(r => r.json()),
-    maskImgLoaded,
     boundary.load(MASK_PNG_URL),
+    loadImageCanvas(NONVACANT_MASK_PNG_URL),
   ]);
-
-  const invertedMaskUrl = invertMaskAlpha(loadedMaskImg);
 
   const maskBounds = L.latLngBounds(
     [bounds.south, bounds.west],
@@ -136,53 +125,67 @@ export async function createMap(containerId) {
   map.fitBounds(maskBounds);
 
   // ── Mask geometry sync ──
+  // Render only the viewport-visible portion of each mask to a canvas,
+  // then use the canvas data URL as the CSS mask-image. This keeps the
+  // mask at viewport resolution regardless of zoom level — the old
+  // approach scaled the full PNG via mask-size, which exceeded browser
+  // texture limits (~16 384 px) at high zoom and disappeared entirely.
+  const vacantSrcCanvas = boundary.maskCanvas;
+  const vacantWorkCanvas = document.createElement('canvas');
+  const nonvacantWorkCanvas = document.createElement('canvas');
+
+  function renderCroppedMask(src, work, viewW, viewH, nw, maskW, maskH) {
+    work.width = viewW;
+    work.height = viewH;
+    const ctx = work.getContext('2d');
+    const srcW = src.width;
+    const srcH = src.height;
+    const scaleX = srcW / maskW;
+    const scaleY = srcH / maskH;
+    const sx = -nw.x * scaleX;
+    const sy = -nw.y * scaleY;
+    const sw = viewW * scaleX;
+    const sh = viewH * scaleY;
+    const cx0 = Math.max(0, sx);
+    const cy0 = Math.max(0, sy);
+    const cx1 = Math.min(srcW, sx + sw);
+    const cy1 = Math.min(srcH, sy + sh);
+    if (cx1 <= cx0 || cy1 <= cy0) return;
+    ctx.drawImage(src, cx0, cy0, cx1 - cx0, cy1 - cy0,
+                  (cx0 - sx) / scaleX, (cy0 - sy) / scaleY,
+                  (cx1 - cx0) / scaleX, (cy1 - cy0) / scaleY);
+  }
+
+  function applyCanvasMask(pane, dataUrl, viewW, viewH) {
+    const s = pane.style;
+    s.width = `${viewW}px`;
+    s.height = `${viewH}px`;
+    s.maskImage = s.webkitMaskImage = `url(${dataUrl})`;
+    s.maskRepeat = s.webkitMaskRepeat = 'no-repeat';
+    s.maskSize = s.webkitMaskSize = `${viewW}px ${viewH}px`;
+    s.maskPosition = s.webkitMaskPosition = '0px 0px';
+  }
+
   function updateMaskGeometry() {
     const nw = map.latLngToLayerPoint(maskBounds.getNorthWest());
     const se = map.latLngToLayerPoint(maskBounds.getSouthEast());
-    const w = Math.max(0, se.x - nw.x);
-    const h = Math.max(0, se.y - nw.y);
+    const maskW = se.x - nw.x;
+    const maskH = se.y - nw.y;
+    if (maskW <= 0 || maskH <= 0) return;
 
-    // Panes are 0x0 boxes (their .leaflet-map-pane ancestor is too, so
-    // width/height:100% resolves to 0% of nothing) and mask-clip defaults
-    // to border-box, so without an explicit box the mask has a 0x0 clip
-    // region and nothing in the pane is ever visible.
-    //
-    // The box can't be sized to nw.x/nw.y + w/h: those go negative once
-    // zoomed in (the mask's geo corner shifts left/above the pane's fixed
-    // (0,0) origin — panes can't be repositioned to compensate without
-    // dragging their tile children out of alignment, since tiles are
-    // positioned relative to the pane's own box). A box anchored at (0,0)
-    // can only grow right/down, so a negative nw pushes the mask's reveal
-    // region entirely outside it.
-    //
-    // Instead, size the box to the current viewport (map.getSize()): the
-    // container itself clips to that (overflow: hidden), so nothing further
-    // out is visible anyway, and the box covers whatever of the mask does
-    // land on screen regardless of which direction nw.x/nw.y have drifted.
     const size = map.getSize();
-    const boxW = `${size.x}px`;
-    const boxH = `${size.y}px`;
+    const viewW = size.x;
+    const viewH = size.y;
 
-    const vs = vacantPane.style;
-    vs.width = boxW;
-    vs.height = boxH;
-    vs.maskImage = vs.webkitMaskImage = `url(${MASK_PNG_URL})`;
-    vs.maskRepeat = vs.webkitMaskRepeat = 'no-repeat';
-    vs.maskSize = vs.webkitMaskSize = `${w}px ${h}px`;
-    vs.maskPosition = vs.webkitMaskPosition = `${nw.x}px ${nw.y}px`;
+    renderCroppedMask(vacantSrcCanvas, vacantWorkCanvas, viewW, viewH, nw, maskW, maskH);
+    renderCroppedMask(nonvacantSrcCanvas, nonvacantWorkCanvas, viewW, viewH, nw, maskW, maskH);
 
-    // Non-vacant pane: inverted mask
-    const nvs = nonVacantPane.style;
-    nvs.width = boxW;
-    nvs.height = boxH;
-    nvs.maskImage = nvs.webkitMaskImage = `url(${invertedMaskUrl})`;
-    nvs.maskRepeat = nvs.webkitMaskRepeat = 'no-repeat';
-    nvs.maskSize = nvs.webkitMaskSize = `${w}px ${h}px`;
-    nvs.maskPosition = nvs.webkitMaskPosition = `${nw.x}px ${nw.y}px`;
+    applyCanvasMask(vacantPane, vacantWorkCanvas.toDataURL(), viewW, viewH);
+    applyCanvasMask(nonVacantPane, nonvacantWorkCanvas.toDataURL(), viewW, viewH);
   }
 
   updateMaskGeometry();
-  map.on('move zoom zoomend', updateMaskGeometry);
+  map.on('moveend zoomend', updateMaskGeometry);
 
   // ── URL update helpers ──
   // Call these when slider params change to swap tile URLs
