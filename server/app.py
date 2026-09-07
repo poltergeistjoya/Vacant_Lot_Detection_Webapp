@@ -125,15 +125,12 @@ def array_to_png(arr: np.ndarray) -> bytes:
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 # ── Product tile compositing ─────────────────────────
-# Hardcoded treatments from the "final_vacant_highlight_best" snapshot.
+# Treatment values loaded from data/product_treatment.json.
 
-PRODUCT_BM = dict(grayscale=0.6, brightness=0.8)
-PRODUCT_VC = dict(
-    sig_contrast=6, sig_bias=0.38, gam_master=1.11,
-    gam_r=1.08, gam_g=1.0, gam_b=1.26,
-    sat=1.8, brightness=0.83,
-)
-PRODUCT_NV = dict(grayscale=1.0, brightness=0.52)
+_treatment = json.loads((DATA_DIR / "product_treatment.json").read_text())
+PRODUCT_BM = _treatment["basemap"]
+PRODUCT_VC = _treatment["vacant"]
+PRODUCT_NV = _treatment["nonvacant"]
 
 MASKS_DIR = DATA_DIR / "masks"
 
