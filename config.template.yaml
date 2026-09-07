@@ -8,6 +8,9 @@ data:
   gt_mask:        /path/to/outputs/labels/vacancy_mask_v2.tif
   naip_vrt:       /path/to/data/imagery/naip/nyc/2022/naip_nyc_2022.vrt
   roads_geojson:  /path/to/data/geographic/nyc_roads.geojson
+  # Already-thresholded binary vacant mask (0/1, nodata elsewhere) used by
+  # the visual playground. Not modified by the playground — only read.
+  vacant_mask_tif: /path/to/Vacant_Lot_Detection_Webapp/data/vacant_mask_0298.tif
 
 thresholds:
   default: 0.298

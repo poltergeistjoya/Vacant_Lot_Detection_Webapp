@@ -1,4 +1,4 @@
-import { CHECKPOINTS, GOOD_ZONE, DEFAULT_THRESHOLD } from './layers.js';
+import { CHECKPOINTS, GOOD_ZONE, DEFAULT_THRESHOLD } from './lib/layers.js';
 
 let thresholdsData = null;
 let onChangeCb = null;
@@ -10,9 +10,7 @@ export function getDefaultIndex() {
 
 export function initSlider(container, onChange) {
   onChangeCb = onChange;
-
   const defaultIdx = getDefaultIndex();
-
   container.innerHTML = `
     <label class="slider-label">Confidence Threshold</label>
     <div class="slider-wrap">
@@ -22,20 +20,15 @@ export function initSlider(container, onChange) {
     <div class="threshold-value" id="t-display">${DEFAULT_THRESHOLD.toFixed(3)}</div>
     <div class="metrics" id="metrics"></div>
   `;
-
   positionGoodZone();
-
   const slider = document.getElementById('threshold-slider');
   slider.addEventListener('input', () => {
     const idx = parseInt(slider.value, 10);
     const cp = CHECKPOINTS[idx];
     document.getElementById('t-display').textContent = cp.t.toFixed(3);
     updateMetrics(idx);
-
     clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      if (onChangeCb) onChangeCb(cp);
-    }, 150);
+    debounceTimer = setTimeout(() => { if (onChangeCb) onChangeCb(cp); }, 150);
   });
 }
 
@@ -44,10 +37,8 @@ function positionGoodZone() {
   const startIdx = CHECKPOINTS.findIndex(c => c.t >= GOOD_ZONE[0]);
   const endIdx = CHECKPOINTS.findIndex(c => c.t >= GOOD_ZONE[1]);
   const total = CHECKPOINTS.length - 1;
-  const left = (startIdx / total) * 100;
-  const width = ((endIdx - startIdx) / total) * 100;
-  bar.style.left = `${left}%`;
-  bar.style.width = `${width}%`;
+  bar.style.left = `${(startIdx / total) * 100}%`;
+  bar.style.width = `${((endIdx - startIdx) / total) * 100}%`;
 }
 
 export function setThresholdsData(data) {
@@ -57,10 +48,7 @@ export function setThresholdsData(data) {
 
 function updateMetrics(idx) {
   const el = document.getElementById('metrics');
-  if (!thresholdsData) {
-    el.textContent = 'Loading metrics…';
-    return;
-  }
+  if (!thresholdsData) { el.textContent = 'Loading metrics\u2026'; return; }
   const cp = thresholdsData.checkpoints[idx];
   if (!cp) return;
   const m = cp.test;

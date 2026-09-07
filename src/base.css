@@ -1,0 +1,83 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0f1117;
+  --surface: #181a20;
+  --surface-2: #1e2028;
+  --border: rgba(255, 255, 255, 0.06);
+  --border-hover: rgba(255, 255, 255, 0.12);
+  --text: #e4e4e7;
+  --text-muted: #71717a;
+  --text-dim: #52525b;
+  --accent: #60a5fa;
+  --accent-muted: rgba(96, 165, 250, 0.15);
+  --danger: #f87171;
+  --radius: 6px;
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Fix tile seams — the half-pixel gaps between Leaflet tiles */
+.seamless-tiles .leaflet-tile {
+  outline: 1px solid transparent;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+.leaflet-tile-container {
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+/* Suppress Leaflet's default border on tile images */
+.leaflet-container img.leaflet-tile {
+  outline: none;
+  border: none;
+}
+
+/* Clean up Leaflet attribution */
+.leaflet-control-attribution {
+  font-family: var(--font) !important;
+  font-size: 10px !important;
+  background: rgba(15, 17, 23, 0.75) !important;
+  color: var(--text-dim) !important;
+  backdrop-filter: blur(8px);
+  border: none !important;
+}
+.leaflet-control-attribution a {
+  color: var(--text-muted) !important;
+}
+
+/* Zoom controls */
+.leaflet-control-zoom {
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+}
+.leaflet-control-zoom a {
+  background: rgba(24, 26, 32, 0.85) !important;
+  color: var(--text) !important;
+  border-color: var(--border) !important;
+  width: 32px !important;
+  height: 32px !important;
+  line-height: 32px !important;
+  font-size: 16px !important;
+}
+.leaflet-control-zoom a:hover {
+  background: rgba(30, 32, 40, 0.95) !important;
+  color: var(--accent) !important;
+}

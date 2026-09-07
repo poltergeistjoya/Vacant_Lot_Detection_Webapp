@@ -1,0 +1,21 @@
+{
+  "name": "final_vacant_highlight_best",
+  "basemap": {
+    "grayscale": 0.6,
+    "brightness": 0.8
+  },
+  "vacant": {
+    "sig_contrast": 6,
+    "sig_bias": 0.38,
+    "gam_master": 1.11,
+    "gam_r": 1.08,
+    "gam_g": 1.0,
+    "gam_b": 1.26,
+    "sat": 1.8,
+    "brightness": 0.83
+  },
+  "nonvacant": {
+    "grayscale": 1.0,
+    "brightness": 0.52
+  }
+}

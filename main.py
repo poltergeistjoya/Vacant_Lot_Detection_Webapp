@@ -1,6 +1,7 @@
-def main():
-    print("Hello from vacant-lot-detection-webapp!")
+#!/usr/bin/env python3
+"""Run the FastAPI development server for the playground backend."""
 
+import uvicorn
 
 if __name__ == "__main__":
-    main()
+    uvicorn.run("server.app:app", host="127.0.0.1", port=8000, reload=True)
