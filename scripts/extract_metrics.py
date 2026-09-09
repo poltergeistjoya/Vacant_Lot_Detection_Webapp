@@ -5,16 +5,10 @@ import json
 from pathlib import Path
 
 import numpy as np
-import yaml
 
-_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.local.yaml"
-if not _CONFIG_PATH.exists():
-    raise FileNotFoundError(
-        f"Config not found: {_CONFIG_PATH}\n"
-        "Copy config.template.yaml to config.local.yaml and fill in your paths."
-    )
-with _CONFIG_PATH.open() as _f:
-    _cfg = yaml.safe_load(_f)
+from config import load_config
+
+_cfg = load_config()
 
 NPZ_PATH = Path(_cfg["data"]["pr_curves"])
 OUT_PATH = Path(__file__).resolve().parent.parent / "data" / "thresholds.json"

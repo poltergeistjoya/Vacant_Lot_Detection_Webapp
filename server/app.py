@@ -152,29 +152,47 @@ def _tile_to_mercator_bounds(z, x, y):
     return left, bottom, right, top
 
 
-@lru_cache(maxsize=8)
-def _load_product_masks(threshold_str: str):
-    """Load vacant + non-vacant mask PNGs and their Mercator bounds."""
-    d = MASKS_DIR / threshold_str
-    vacant_path = d / "vacant.png"
-    nonvacant_path = d / "nonvacant.png"
-    bounds_path = d / "bounds.json"
+@lru_cache(maxsize=1)
+def _load_shared_masks():
+    """Load the shared boundary mask and Mercator bounds (threshold-independent)."""
+    boundary_path = MASKS_DIR / "boundary.png"
+    bounds_path = MASKS_DIR / "bounds.json"
 
-    if not vacant_path.exists():
+    if not boundary_path.exists():
         return None
 
     bounds = json.loads(bounds_path.read_text())
     ml, mb = _lonlat_to_mercator(bounds["west"], bounds["south"])
     mr, mt = _lonlat_to_mercator(bounds["east"], bounds["north"])
 
+    boundary_arr = (np.array(Image.open(boundary_path))[:, :, 3] > 127)
+
+    return {
+        "boundary": boundary_arr,
+        "bounds": (ml, mb, mr, mt),
+        "shape": boundary_arr.shape,
+    }
+
+
+@lru_cache(maxsize=8)
+def _load_product_masks(threshold_str: str):
+    """Load vacant mask for a threshold, derive non-vacant from shared boundary."""
+    shared = _load_shared_masks()
+    if shared is None:
+        return None
+
+    vacant_path = MASKS_DIR / threshold_str / "vacant.png"
+    if not vacant_path.exists():
+        return None
+
     vacant_arr = (np.array(Image.open(vacant_path))[:, :, 3] > 127)
-    nonvacant_arr = (np.array(Image.open(nonvacant_path))[:, :, 3] > 127)
+    nonvacant_arr = shared["boundary"] & ~vacant_arr
 
     return {
         "vacant": vacant_arr,
         "nonvacant": nonvacant_arr,
-        "bounds": (ml, mb, mr, mt),
-        "shape": vacant_arr.shape,
+        "bounds": shared["bounds"],
+        "shape": shared["shape"],
     }
 
 

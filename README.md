@@ -12,26 +12,43 @@ input.
 ```bash
 uv sync                              # install Python dependencies
 npm install                          # install JS dependencies
-cp config.template.yaml config.local.yaml   # then fill in vacant_mask_tif
-uv run scripts/prepare_mask_overlay.py      # generates data/mask_overlay.{png,json}
-npm run dev                          # start Vite dev server
+
+# Config: copy template and fill in paths, or set the env var for worktree persistence
+cp config.template.yaml config.local.yaml
+# OR: export GENERATE_MASKS_CONFIG=~/.config/generate_masks/config.local.yaml
+
+# Generate masks for all thresholds (or use -t 0.298 for just one)
+cd scripts && uv run prepare_mask_overlay.py --all && cd ..
+
+# Start the backend + frontend
+uv run main.py &                     # FastAPI backend on :8000
+npm run dev                          # Vite dev server on :5173
 ```
 
 Open http://localhost:5173 in your browser.
 
-## Generating the overlay
+## Generating masks
 
-`scripts/prepare_mask_overlay.py` reads `data.vacant_mask_tif` from
-`config.local.yaml`, reprojects it to Web Mercator, and writes:
+`scripts/prepare_mask_overlay.py` reads the raw prediction probability TIF
+(`data.prediction_tif` in config), reprojects it to Web Mercator, and
+produces masks at each requested threshold:
 
-- `data/mask_overlay.png` — RGBA image; alpha channel is the mask (opaque
-  where the source pixel value is exactly `1`, transparent for `0`, `255`,
-  and any NoData). Downsampled to a max side of 6000px for browser
-  performance (`Resampling.max` keeps small vacant lots from vanishing).
-- `data/mask_overlay.json` — WGS84 bounds for the overlay.
+```
+data/masks/
+  boundary.png          # shared Bronx land mask (water subtracted)
+  bounds.json           # WGS84 geo bounds
+  t0298/vacant.png      # per-threshold vacant mask
+  t0400/vacant.png
+  ...
+```
 
-It only *reads* the source TIF — never modifies it. Both output files are
-gitignored; re-run the script whenever the source mask changes.
+Usage:
+- `--all` generates all 18 checkpoints from config
+- `-t 0.298` generates a single threshold (repeatable)
+- No args generates only the default threshold
+
+The script only *reads* the source TIF — never modifies it. Outputs are
+gitignored; re-run whenever the source prediction changes.
 
 ## Controls
 
