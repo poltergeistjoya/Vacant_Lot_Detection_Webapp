@@ -2,6 +2,7 @@ import { createMap } from './lib/map.js';
 import {
   TREATMENT_DEFAULTS, VACANT_EXTRA_DEFAULTS, BOUNDARY_DEFAULTS,
 } from './lib/layers.js';
+import { DistrictLayer, DISTRICT_DEFAULTS } from './lib/districts.js';
 import {
   loadActiveState, saveActiveState,
   listSnapshots, saveSnapshot, deleteSnapshot,
@@ -11,7 +12,7 @@ import {
 const ctl = id => document.getElementById(id);
 const val = id => document.getElementById(`val-${id}`);
 
-let state, panes, boundary, mapCtl;
+let state, panes, boundary, mapCtl, districtLayer;
 let comparingOriginal = false;
 let debounceTimers = {};
 
@@ -27,6 +28,7 @@ function buildDefaultState() {
     vc: { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS },
     nv: { ...TREATMENT_DEFAULTS },
     boundary: { ...BOUNDARY_DEFAULTS },
+    district: { ...DISTRICT_DEFAULTS },
   };
 }
 
@@ -113,6 +115,25 @@ function applyBoundaryEffects() {
   boundary.renderShadow({ shadowStrength: b.shadowStrength });
 
   saveActiveState(state);
+}
+
+// ── District update ─────────────────────────────────
+function updateDistricts() {
+  if (districtLayer) {
+    districtLayer.update(state.district);
+    saveActiveState(state);
+  }
+}
+
+function bindDistrictRange(ctlId, key, format) {
+  const input = ctl(ctlId);
+  if (!input) return;
+  input.addEventListener('input', () => {
+    state.district[key] = parseFloat(input.value);
+    const valEl = val(ctlId.replace('ctl-', ''));
+    if (valEl) valEl.textContent = format(state.district[key]);
+    updateDistricts();
+  });
 }
 
 // ── Wiring ──────────────────────────────────────────
@@ -212,6 +233,32 @@ function wireControls() {
   bindBoundaryRange('ctl-shadow-radius', 'shadowRadius', { onChange: applyBoundaryEffects, format: v => `${v}px` });
   bindBoundaryRange('ctl-shadow-strength', 'shadowStrength', { onChange: applyBoundaryEffects, format: v => v.toFixed(2) });
 
+  // District controls
+  ctl('ctl-cd-fill-color')?.addEventListener('input', (e) => {
+    state.district.fillColor = e.target.value;
+    updateDistricts();
+  });
+  bindDistrictRange('ctl-cd-fill-opacity', 'fillOpacity', v => v.toFixed(2));
+  ctl('ctl-cd-stroke-color')?.addEventListener('input', (e) => {
+    state.district.strokeColor = e.target.value;
+    updateDistricts();
+  });
+  bindDistrictRange('ctl-cd-stroke-width', 'strokeWidth', v => `${v}px`);
+  bindDistrictRange('ctl-cd-stroke-opacity', 'strokeOpacity', v => v.toFixed(2));
+  bindDistrictRange('ctl-cd-hover-fill', 'hoverFillOpacity', v => v.toFixed(2));
+  bindDistrictRange('ctl-cd-hover-stroke-w', 'hoverStrokeWidth', v => `${v}px`);
+  bindDistrictRange('ctl-cd-hover-stroke-o', 'hoverStrokeOpacity', v => v.toFixed(2));
+  bindDistrictRange('ctl-cd-hover-sat', 'hoverSaturate', v => `${v.toFixed(1)}x`);
+  ctl('ctl-cd-scale-enabled')?.addEventListener('change', (e) => {
+    state.district.hoverScaleEnabled = e.target.checked;
+    updateDistricts();
+  });
+  bindDistrictRange('ctl-cd-scale-amount', 'hoverScale', v => `${v.toFixed(3)}x`);
+  ctl('ctl-cd-label-enabled')?.addEventListener('change', (e) => {
+    state.district.hoverLabelEnabled = e.target.checked;
+    updateDistricts();
+  });
+
   // Reset
   ctl('reset-btn').addEventListener('click', () => {
     Object.assign(state, buildDefaultState());
@@ -220,6 +267,7 @@ function wireControls() {
     updateVacantTiles();
     updateNonVacantTiles();
     applyBoundaryEffects();
+    updateDistricts();
     exitCompare();
   });
 
@@ -271,6 +319,31 @@ function syncControlsFromState() {
   val('shadow-radius').textContent = `${b.shadowRadius}px`;
   ctl('ctl-shadow-strength').value = b.shadowStrength;
   val('shadow-strength').textContent = b.shadowStrength.toFixed(2);
+
+  // District
+  const d = state.district;
+  const setVal = (id, v) => { const el = ctl(id); if (el) el.value = v; };
+  const setTxt = (id, t) => { const el = val(id); if (el) el.textContent = t; };
+  setVal('ctl-cd-fill-color', d.fillColor);
+  setVal('ctl-cd-fill-opacity', d.fillOpacity);
+  setTxt('cd-fill-opacity', d.fillOpacity.toFixed(2));
+  setVal('ctl-cd-stroke-color', d.strokeColor);
+  setVal('ctl-cd-stroke-width', d.strokeWidth);
+  setTxt('cd-stroke-width', `${d.strokeWidth}px`);
+  setVal('ctl-cd-stroke-opacity', d.strokeOpacity);
+  setTxt('cd-stroke-opacity', d.strokeOpacity.toFixed(2));
+  setVal('ctl-cd-hover-fill', d.hoverFillOpacity);
+  setTxt('cd-hover-fill', d.hoverFillOpacity.toFixed(2));
+  setVal('ctl-cd-hover-stroke-w', d.hoverStrokeWidth);
+  setTxt('cd-hover-stroke-w', `${d.hoverStrokeWidth}px`);
+  setVal('ctl-cd-hover-stroke-o', d.hoverStrokeOpacity);
+  setTxt('cd-hover-stroke-o', d.hoverStrokeOpacity.toFixed(2));
+  setVal('ctl-cd-hover-sat', d.hoverSaturate);
+  setTxt('cd-hover-sat', `${d.hoverSaturate.toFixed(1)}x`);
+  ctl('ctl-cd-scale-enabled').checked = d.hoverScaleEnabled;
+  setVal('ctl-cd-scale-amount', d.hoverScale);
+  setTxt('cd-scale-amount', `${d.hoverScale.toFixed(3)}x`);
+  ctl('ctl-cd-label-enabled').checked = d.hoverLabelEnabled;
 }
 
 // ── Presets ──────────────────────────────────────────
@@ -407,6 +480,7 @@ async function init() {
     Object.assign(state.vc, saved.vc);
     Object.assign(state.nv, saved.nv);
     if (saved.boundary) Object.assign(state.boundary, saved.boundary);
+    if (saved.district) Object.assign(state.district, saved.district);
   }
 
   syncControlsFromState();
@@ -417,6 +491,10 @@ async function init() {
   wireControls();
   wireSnapshots();
   loadPresets();
+
+  // Load district boundaries
+  districtLayer = new DistrictLayer(mapCtl.map, state.district);
+  districtLayer.load('community_districts.geojson');
 }
 
 init();

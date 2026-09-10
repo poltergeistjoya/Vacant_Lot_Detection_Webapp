@@ -352,3 +352,20 @@ details.sub-panel[open] > .sub-panel-heading::before {
 .select-input:focus {
   border-color: var(--accent);
 }
+
+/* ── CD Label Tooltip ────────────────────────────── */
+.cd-label {
+  background: rgba(20, 22, 30, 0.92) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  font-family: var(--font) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  padding: 6px 10px !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
+  white-space: nowrap !important;
+}
+.cd-label::before {
+  display: none !important;
+}
