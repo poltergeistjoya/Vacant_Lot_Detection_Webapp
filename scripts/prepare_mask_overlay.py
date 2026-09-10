@@ -1,71 +1,60 @@
 #!/usr/bin/env python3
-"""Prepare the vacant/non-vacant masks for the browser playground.
+"""Prepare vacant masks for the browser map at one or more thresholds.
 
-Reads the (already-thresholded) binary mask TIF from config, reprojects +
-downsamples it to Web Mercator, burns out road rights-of-way (from the
-repo's data/roads.geojson) so roads never render as vacant, and writes two
-RGBA PNGs whose alpha channels are the vacant and non-vacant masks (opaque
-where they apply, transparent elsewhere), plus a shared JSON sidecar with
-their WGS84 bounds for use as Leaflet ImageOverlays.
+Reads the raw prediction probability TIF, reprojects + downsamples to
+Web Mercator, computes a shared boundary mask (Bronx land minus water),
+and for each requested threshold produces a vacant mask PNG with roads
+burned out.
 
-Source pixel semantics (per the model pipeline, not re-derived here):
-  0 -> not vacant   -> non-vacant candidate
-  1 -> vacant       -> vacant candidate
+Output structure:
+  data/masks/
+    boundary.png        — shared Bronx-land mask (RGBA, alpha=255 inside)
+    bounds.json         — WGS84 geo bounds for all masks
+    t0298/vacant.png    — per-threshold vacant mask
+    ...
 
-The source raster has no NoData — it's a plain rectangle of 0/1 values
-covering the whole model grid, including water and slivers of neighboring
-boroughs (the model was never geographically restricted to the Bronx).
-So neither pixel value alone tells you whether a pixel is real Bronx land;
-both masks are further restricted to data/bronx_boundary.geojson (Bronx
-County, from Census TIGERweb — see that file's provenance note) the same
-way roads are punched out of the vacant mask: rasterize the boundary onto
-the same grid and require pixels to fall inside it.
-
-This script only reads the source TIF; it never modifies it.
+The server derives non-vacant at load time as boundary & ~vacant.
 """
 
 import json
+import sys
 from pathlib import Path
 
+import click
 import numpy as np
 import rasterio
-import yaml
 from PIL import Image
 from pyproj import Transformer
 from rasterio.features import rasterize
 from rasterio.warp import calculate_default_transform, reproject, transform_bounds
 from rasterio.enums import Resampling
-from shapely.geometry import shape, mapping
+from shapely.geometry import shape
 from shapely.ops import transform as shapely_transform, unary_union
 
-_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.local.yaml"
-if not _CONFIG_PATH.exists():
-    raise FileNotFoundError(
-        f"Config not found: {_CONFIG_PATH}\n"
-        "Copy config.template.yaml to config.local.yaml and fill in your paths."
-    )
-with _CONFIG_PATH.open() as _f:
-    _cfg = yaml.safe_load(_f)
+from config import load_config
 
-SRC_TIF = Path(_cfg["data"]["vacant_mask_tif"])
-OUT_DIR = Path(__file__).resolve().parent.parent / "data"
-OUT_PNG = OUT_DIR / "mask_overlay.png"
-OUT_NONVACANT_PNG = OUT_DIR / "nonvacant_mask_overlay.png"
-OUT_JSON = OUT_DIR / "mask_overlay.json"
+_cfg = load_config()
 
-# Project-local assets (checked into data/), not machine-specific paths,
-# so they're referenced directly rather than through config.local.yaml.
-ROADS_GEOJSON = Path(__file__).resolve().parent.parent / "data" / "roads.geojson"
-ROADS_SRC_CRS = "EPSG:4269"  # roads.geojson's declared CRS (NAD83)
-ROAD_BUFFER_M = 8  # half-width, meters; approximates ROW for a typical local street
+PREDICTION_TIF = Path(_cfg["data"]["prediction_tif"])
 
-BRONX_BOUNDARY_GEOJSON = Path(__file__).resolve().parent.parent / "data" / "bronx_boundary.geojson"
-BRONX_BOUNDARY_SRC_CRS = "EPSG:4269"  # TIGERweb's declared CRS (NAD83)
+_REPO_DATA = Path(__file__).resolve().parent.parent / "data"
+OUT_DIR = _REPO_DATA / "masks"
 
-BRONX_AREAWATER_GEOJSON = Path(__file__).resolve().parent.parent / "data" / "bronx_areawater.geojson"
+ROADS_GEOJSON = _REPO_DATA / "roads.geojson"
+ROADS_SRC_CRS = "EPSG:4269"
+ROAD_BUFFER_M = 8
+
+BRONX_BOUNDARY_GEOJSON = _REPO_DATA / "bronx_boundary.geojson"
+BRONX_BOUNDARY_SRC_CRS = "EPSG:4269"
+
+BRONX_AREAWATER_GEOJSON = _REPO_DATA / "bronx_areawater.geojson"
 
 DST_CRS = "EPSG:3857"
-MAX_DIM = 6000  # longest output side, in pixels
+MAX_DIM = 6000
+
+
+def t_str(t):
+    return f"t{round(t * 1000):04d}"
 
 
 def load_land_boundary():
@@ -90,8 +79,7 @@ def load_land_boundary():
 
 def rasterize_geojson(path, src_crs, dst_shape, dst_transform, dst_bounds_3857,
                        buffer_m=0, label="features"):
-    """Rasterize a GeoJSON file's features (reprojected + optionally
-    buffered) into a boolean mask on the dst grid."""
+    """Rasterize a GeoJSON file onto the destination grid as a boolean mask."""
     if not path.exists():
         print(f"No {label} file at {path}, skipping.")
         return np.zeros(dst_shape, dtype=bool)
@@ -107,7 +95,7 @@ def rasterize_geojson(path, src_crs, dst_shape, dst_transform, dst_bounds_3857,
         proj_geom = shapely_transform(transformer.transform, shape(feat["geometry"]))
         gminx, gminy, gmaxx, gmaxy = proj_geom.bounds
         if gmaxx < minx or gminx > maxx or gmaxy < miny or gminy > maxy:
-            continue  # outside the mask extent
+            continue
         shapes.append(proj_geom.buffer(buffer_m) if buffer_m else proj_geom)
 
     print(f"Rasterizing {len(shapes)} {label} intersecting the mask extent...")
@@ -121,12 +109,37 @@ def rasterize_geojson(path, src_crs, dst_shape, dst_transform, dst_bounds_3857,
     return mask.astype(bool)
 
 
-def main():
-    if not SRC_TIF.exists():
-        raise FileNotFoundError(f"vacant_mask_tif not found: {SRC_TIF}")
+def save_mask_png(mask_bool, path):
+    """Save a boolean mask as an RGBA PNG (white, alpha from mask)."""
+    h, w = mask_bool.shape
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[mask_bool] = [255, 255, 255, 255]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(rgba, mode="RGBA").save(path)
 
-    with rasterio.open(SRC_TIF) as src:
-        print(f"Source: {src.width}x{src.height}, crs={src.crs}")
+
+@click.command()
+@click.option("--all", "all_thresholds", is_flag=True,
+              help="Generate masks for all checkpoints in config.")
+@click.option("--threshold", "-t", type=float, multiple=True,
+              help="Generate mask for a specific threshold (repeatable).")
+def main(all_thresholds, threshold):
+    """Generate vacant masks from the prediction probability TIF."""
+    t_cfg = _cfg["thresholds"]
+
+    if all_thresholds:
+        thresholds = t_cfg["evaluation_thresholds"]
+    elif threshold:
+        thresholds = list(threshold)
+    else:
+        thresholds = [t_cfg["default"]]
+
+    if not PREDICTION_TIF.exists():
+        raise FileNotFoundError(f"prediction_tif not found: {PREDICTION_TIF}")
+
+    # --- Reproject probability raster once ---
+    with rasterio.open(PREDICTION_TIF) as src:
+        print(f"Source: {src.width}x{src.height}, crs={src.crs}, dtype={src.dtypes[0]}")
 
         full_w, full_h = calculate_default_transform(
             src.crs, DST_CRS, src.width, src.height, *src.bounds
@@ -140,68 +153,55 @@ def main():
         )
 
         print(f"Reprojecting to {DST_CRS} at {dst_w}x{dst_h}...")
-        dst = np.zeros((dst_h, dst_w), dtype=np.uint8)
+        prob = np.zeros((dst_h, dst_w), dtype=np.float32)
         reproject(
             source=rasterio.band(src, 1),
-            destination=dst,
+            destination=prob,
             src_transform=src.transform,
             src_crs=src.crs,
             dst_transform=dst_transform,
             dst_crs=DST_CRS,
-            resampling=Resampling.max,  # keep small vacant lots from vanishing when downsampled
+            resampling=Resampling.bilinear,
         )
 
         dst_bounds_3857 = rasterio.transform.array_bounds(dst_h, dst_w, dst_transform)
         west, south, east, north = transform_bounds(DST_CRS, "EPSG:4326", *dst_bounds_3857)
 
-    non_vacant = dst == 0  # candidate non-vacant pixels
-    vacant = dst == 1  # candidate vacant pixels
-
-    # The source raster has no NoData: the model predicted 0/1 across the
-    # full rectangular grid, including water and slivers of neighboring
-    # boroughs — there's nothing in the pixel values themselves that marks
-    # "outside the Bronx". Both masks need the boundary punch-out, not
-    # just non-vacant.
+    # --- Shared masks (computed once) ---
     land_geom = load_land_boundary()
     transformer = Transformer.from_crs(BRONX_BOUNDARY_SRC_CRS, DST_CRS, always_xy=True)
     land_3857 = shapely_transform(transformer.transform, land_geom)
-    roi_mask = rasterize(
+    boundary_mask = rasterize(
         [land_3857], out_shape=(dst_h, dst_w), transform=dst_transform,
         fill=0, default_value=1, dtype="uint8",
     ).astype(bool)
-    print(f"Vacant pixels outside the Bronx boundary (excluded): "
-          f"{int((vacant & ~roi_mask).sum())}")
-    print(f"Non-vacant pixels outside the Bronx boundary (excluded): "
-          f"{int((non_vacant & ~roi_mask).sum())}")
-    vacant &= roi_mask
-    non_vacant &= roi_mask
 
     road_mask = rasterize_geojson(
         ROADS_GEOJSON, ROADS_SRC_CRS, (dst_h, dst_w), dst_transform, dst_bounds_3857,
         buffer_m=ROAD_BUFFER_M, label="road buffers",
     )
-    on_road = vacant & road_mask
-    print(f"Vacant pixels on a road (masked out): {int(on_road.sum())}")
-    vacant &= ~road_mask
 
-    rgba = np.zeros((dst_h, dst_w, 4), dtype=np.uint8)
-    rgba[vacant] = [255, 255, 255, 255]  # white; the playground tints this client-side
-
-    nonvacant_rgba = np.zeros((dst_h, dst_w, 4), dtype=np.uint8)
-    nonvacant_rgba[non_vacant] = [255, 255, 255, 255]
-
+    # --- Write shared outputs ---
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(rgba, mode="RGBA").save(OUT_PNG)
-    Image.fromarray(nonvacant_rgba, mode="RGBA").save(OUT_NONVACANT_PNG)
-    OUT_JSON.write_text(json.dumps({
+
+    save_mask_png(boundary_mask, OUT_DIR / "boundary.png")
+    print(f"Wrote {OUT_DIR / 'boundary.png'} ({int(boundary_mask.sum())} land pixels)")
+
+    bounds_path = OUT_DIR / "bounds.json"
+    bounds_path.write_text(json.dumps({
         "west": west, "south": south, "east": east, "north": north,
     }, indent=2) + "\n")
+    print(f"Wrote {bounds_path}")
 
-    print(f"Vacant pixels: {int(vacant.sum())} / {vacant.size}")
-    print(f"Non-vacant pixels: {int(non_vacant.sum())} / {non_vacant.size}")
-    print(f"Wrote {OUT_PNG}")
-    print(f"Wrote {OUT_NONVACANT_PNG}")
-    print(f"Wrote {OUT_JSON}")
+    # --- Per-threshold vacant masks ---
+    for t in thresholds:
+        ts = t_str(t)
+        vacant = (prob > t) & boundary_mask & ~road_mask
+        out_path = OUT_DIR / ts / "vacant.png"
+        save_mask_png(vacant, out_path)
+        print(f"  {ts}: {int(vacant.sum())} vacant pixels → {out_path}")
+
+    print(f"\nDone — {len(thresholds)} threshold(s) written to {OUT_DIR}")
 
 
 if __name__ == "__main__":

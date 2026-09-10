@@ -1,5 +1,8 @@
 # Copy this file to config.local.yaml and fill in your local paths.
 # config.local.yaml is gitignored — never commit it.
+#
+# For worktree persistence, set GENERATE_MASKS_CONFIG env var to a
+# stable path (e.g. ~/.config/generate_masks/config.local.yaml).
 
 # External files produced by the training pipeline (generated once, not here)
 data:
@@ -7,10 +10,6 @@ data:
   prediction_tif: /path/to/outputs/models/deeplabv3plus/kahan_027/figures/test_pred_s512.tif
   gt_mask:        /path/to/outputs/labels/vacancy_mask_v2.tif
   naip_vrt:       /path/to/data/imagery/naip/nyc/2022/naip_nyc_2022.vrt
-  roads_geojson:  /path/to/data/geographic/nyc_roads.geojson
-  # Already-thresholded binary vacant mask (0/1, nodata elsewhere) used by
-  # the visual playground. Not modified by the playground — only read.
-  vacant_mask_tif: /path/to/Vacant_Lot_Detection_Webapp/data/vacant_mask_0298.tif
 
 thresholds:
   default: 0.298
