@@ -128,12 +128,15 @@ function updateTileSource() {
     attribution: ESRI_ATTRIBUTION,
   });
 
-  map.addLayer({
-    id: 'product',
-    type: 'raster',
-    source: 'product',
-    layout: { visibility: wasVisible ? 'visible' : 'none' },
-  });
+  map.addLayer(
+    {
+      id: 'product',
+      type: 'raster',
+      source: 'product',
+      layout: { visibility: wasVisible ? 'visible' : 'none' },
+    },
+    map.getLayer('cd-fill') ? 'cd-fill' : undefined,
+  );
 }
 
 // ── Layer panel ─────────────────────────────────────
