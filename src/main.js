@@ -4,6 +4,7 @@ import {
   ESRI_BASEMAP_URL, ESRI_ATTRIBUTION, BRONX_CENTER_LNG_LAT,
   DEFAULT_ZOOM, CHECKPOINTS, DEFAULT_THRESHOLD, NAIP_TILE_URL,
 } from './lib/layers.js';
+import { addDistrictLayer } from './lib/districts.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
 
@@ -36,8 +37,7 @@ const map = new maplibregl.Map({
   center: BRONX_CENTER_LNG_LAT,
   zoom: DEFAULT_ZOOM,
   maxZoom: 18,
-}); 
-window.DEBUG_MAP = map;
+});
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
@@ -175,15 +175,23 @@ function onThresholdChange(cp) {
 // ── Init ────────────────────────────────────────────
 map.on('load', () => {
   addDevLayers();
+  addCDLayer();
   buildLayerPanel();
   loadThresholds();
 
-  // Hide error legend in non-dev mode
   if (!IS_DEV) {
     const legend = document.querySelector('.sidebar-section:last-child');
     if (legend) legend.style.display = 'none';
   }
 });
+
+async function addCDLayer() {
+  await addDistrictLayer(map, {
+    onSelect(boroCD) {
+      console.log('Selected CD:', boroCD);
+    },
+  });
+}
 
 initSlider(document.getElementById('slider-container'), onThresholdChange);
 

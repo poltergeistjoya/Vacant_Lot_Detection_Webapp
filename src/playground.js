@@ -1,6 +1,8 @@
 import { createMap } from './lib/map.js';
+import { addDistrictLayer } from './lib/districts.js';
 import {
   TREATMENT_DEFAULTS, VACANT_EXTRA_DEFAULTS, BOUNDARY_DEFAULTS,
+  CD_STYLE_DEFAULTS,
 } from './lib/layers.js';
 import {
   loadActiveState, saveActiveState,
@@ -11,57 +13,28 @@ import {
 const ctl = id => document.getElementById(id);
 const val = id => document.getElementById(`val-${id}`);
 
-let state, panes, boundary, mapCtl;
+let state, mapCtl, districtCtl;
 let comparingOriginal = false;
-let debounceTimers = {};
+let debounceTimer = null;
 
 // ── State shape ─────────────────────────────────────
-// state.bm = { sc, sb, g, gr, gg, gb, sat, gray, br }
-// state.vc = { sc, sb, g, gr, gg, gb, sat, gray, br, tint, to }
-// state.nv = { sc, sb, g, gr, gg, gb, sat, gray, br }
-// state.boundary = { outlineEnabled, outlineColor, ... bloomEnabled, ... shadowEnabled, ... }
-
 function buildDefaultState() {
   return {
     bm: { ...TREATMENT_DEFAULTS },
     vc: { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS },
     nv: { ...TREATMENT_DEFAULTS },
     boundary: { ...BOUNDARY_DEFAULTS },
+    cd: { ...CD_STYLE_DEFAULTS, enabled: true },
   };
 }
 
 // ── Tile URL update (debounced) ─────────────────────
-function updateBasemapTiles() {
-  clearTimeout(debounceTimers.bm);
-  debounceTimers.bm = setTimeout(() => {
-    mapCtl.setBasemapUrl(prefixParams('bm_', state.bm));
+function updateProductTiles() {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    mapCtl.setTreatmentParams(state.bm, state.vc, state.nv);
     saveActiveState(state);
   }, 200);
-}
-
-function updateVacantTiles() {
-  clearTimeout(debounceTimers.vc);
-  debounceTimers.vc = setTimeout(() => {
-    mapCtl.setVacantUrl(state.vc);
-    saveActiveState(state);
-  }, 200);
-}
-
-function updateNonVacantTiles() {
-  clearTimeout(debounceTimers.nv);
-  debounceTimers.nv = setTimeout(() => {
-    mapCtl.setNonVacantUrl(state.nv);
-    saveActiveState(state);
-  }, 200);
-}
-
-/** Prefix keys for the combined basemap endpoint */
-function prefixParams(prefix, params) {
-  const out = {};
-  for (const [k, v] of Object.entries(params)) {
-    out[prefix + k] = v;
-  }
-  return out;
 }
 
 // ── Compare ─────────────────────────────────────────
@@ -78,39 +51,29 @@ function setComparing(on) {
   btn.textContent = on ? 'Styled' : 'Original';
   btn.classList.toggle('compare-active', on);
   if (on) {
-    // Reset all tile layers to plain Esri
-    mapCtl.setBasemapUrl({});
-    mapCtl.setVacantUrl({});
-    mapCtl.setNonVacantUrl({});
-    // Hide boundary effects
-    panes.outlinePane.style.opacity = 0;
-    panes.glowPane.style.opacity = 0;
-    panes.shadowPane.style.opacity = 0;
+    mapCtl.clearTreatments();
+    mapCtl.hideBoundaryEffects();
   } else {
-    // Restore
-    updateBasemapTiles();
-    updateVacantTiles();
-    updateNonVacantTiles();
+    updateProductTiles();
     applyBoundaryEffects();
   }
 }
 
-// ── Boundary effects (still CSS/canvas, not backend) ─
+// ── Boundary effects ────────────────────────────────
 function applyBoundaryEffects() {
   const b = state.boundary;
-  // Outline
-  panes.outlinePane.style.opacity = b.outlineEnabled ? b.outlineOpacity : 0;
-  boundary.renderOutline({ outlineColor: b.outlineColor, outlineWidth: b.outlineWidth });
 
-  // Bloom (uses glow pane with CSS blur)
-  panes.glowPane.style.opacity = b.bloomEnabled ? b.bloomIntensity : 0;
-  panes.glowPane.style.filter = `blur(${b.bloomRadius}px)`;
-  boundary.renderGlow({ glowColor: b.bloomColor, glowStrength: b.bloomIntensity });
+  mapCtl.boundary.renderOutline({ outlineColor: b.outlineColor, outlineWidth: b.outlineWidth });
+  mapCtl.updateBoundaryImage('outline', mapCtl.boundary.outlineCanvas,
+    b.outlineEnabled ? b.outlineOpacity : 0);
 
-  // Shadow
-  panes.shadowPane.style.opacity = b.shadowEnabled ? 1 : 0;
-  panes.shadowPane.style.filter = `blur(${b.shadowRadius}px)`;
-  boundary.renderShadow({ shadowStrength: b.shadowStrength });
+  mapCtl.boundary.renderGlow({ glowColor: b.bloomColor, glowStrength: b.bloomIntensity });
+  mapCtl.updateBoundaryImage('glow', mapCtl.boundary.glowCanvas,
+    b.bloomEnabled ? b.bloomIntensity : 0, b.bloomRadius);
+
+  mapCtl.boundary.renderShadow({ shadowStrength: b.shadowStrength });
+  mapCtl.updateBoundaryImage('shadow', mapCtl.boundary.shadowCanvas,
+    b.shadowEnabled ? 1 : 0, b.shadowRadius);
 
   saveActiveState(state);
 }
@@ -153,26 +116,22 @@ const COMMON_CONTROLS = [
 ];
 
 function wireControls() {
-  // Basemap controls
   for (const c of COMMON_CONTROLS) {
-    bindRange(`ctl-bm-${c.suffix}`, 'bm', c.key, { onChange: updateBasemapTiles, format: c.format });
+    bindRange(`ctl-bm-${c.suffix}`, 'bm', c.key, { onChange: updateProductTiles, format: c.format });
   }
 
-  // Vacant controls
   for (const c of COMMON_CONTROLS) {
-    bindRange(`ctl-vc-${c.suffix}`, 'vc', c.key, { onChange: updateVacantTiles, format: c.format });
+    bindRange(`ctl-vc-${c.suffix}`, 'vc', c.key, { onChange: updateProductTiles, format: c.format });
   }
-  // Vacant tint
   ctl('ctl-vc-tint')?.addEventListener('input', (e) => {
     exitCompare();
     state.vc.tint = e.target.value.replace('#', '');
-    updateVacantTiles();
+    updateProductTiles();
   });
-  bindRange('ctl-vc-to', 'vc', 'to', { onChange: updateVacantTiles, format: v => v.toFixed(2) });
+  bindRange('ctl-vc-to', 'vc', 'to', { onChange: updateProductTiles, format: v => v.toFixed(2) });
 
-  // Non-vacant controls
   for (const c of COMMON_CONTROLS) {
-    bindRange(`ctl-nv-${c.suffix}`, 'nv', c.key, { onChange: updateNonVacantTiles, format: c.format });
+    bindRange(`ctl-nv-${c.suffix}`, 'nv', c.key, { onChange: updateProductTiles, format: c.format });
   }
 
   // Boundary — outline
@@ -216,15 +175,59 @@ function wireControls() {
   ctl('reset-btn').addEventListener('click', () => {
     Object.assign(state, buildDefaultState());
     syncControlsFromState();
-    updateBasemapTiles();
-    updateVacantTiles();
-    updateNonVacantTiles();
+    updateProductTiles();
     applyBoundaryEffects();
     exitCompare();
   });
 
   // Compare
   ctl('compare-btn').addEventListener('click', () => setComparing(!comparingOriginal));
+
+  // Community Districts
+  ctl('ctl-cd-enabled')?.addEventListener('change', (e) => {
+    state.cd.enabled = e.target.checked;
+    updateCDVisibility();
+    saveActiveState(state);
+  });
+  ctl('ctl-cd-fill-color')?.addEventListener('input', (e) => {
+    state.cd.fillColor = e.target.value;
+    updateCDStyle();
+  });
+  bindCDRange('ctl-cd-fill-opacity', 'fillOpacity', v => v.toFixed(2));
+  ctl('ctl-cd-stroke-color')?.addEventListener('input', (e) => {
+    state.cd.strokeColor = e.target.value;
+    updateCDStyle();
+  });
+  bindCDRange('ctl-cd-stroke-width', 'strokeWidth', v => `${v}px`);
+  bindCDRange('ctl-cd-stroke-opacity', 'strokeOpacity', v => v.toFixed(2));
+  bindCDRange('ctl-cd-hover-fill', 'hoverFillOpacity', v => v.toFixed(2));
+  bindCDRange('ctl-cd-hover-stroke-w', 'hoverStrokeWidth', v => `${v}px`);
+  bindCDRange('ctl-cd-hover-stroke-o', 'hoverStrokeOpacity', v => v.toFixed(2));
+}
+
+function bindCDRange(ctlId, key, format) {
+  const input = ctl(ctlId);
+  if (!input) return;
+  input.addEventListener('input', () => {
+    state.cd[key] = parseFloat(input.value);
+    const valEl = val(ctlId.replace('ctl-', ''));
+    if (valEl) valEl.textContent = format(state.cd[key]);
+    updateCDStyle();
+  });
+}
+
+function updateCDStyle() {
+  if (districtCtl) {
+    districtCtl.updateStyle(state.cd);
+    saveActiveState(state);
+  }
+}
+
+function updateCDVisibility() {
+  const map = mapCtl.map;
+  const vis = state.cd.enabled ? 'visible' : 'none';
+  if (map.getLayer('cd-fill')) map.setLayoutProperty('cd-fill', 'visibility', vis);
+  if (map.getLayer('cd-line')) map.setLayoutProperty('cd-line', 'visibility', vis);
 }
 
 // ── Sync UI ← state ─────────────────────────────────
@@ -242,7 +245,6 @@ function syncControlsFromState() {
   syncGroup('vc', state.vc);
   syncGroup('nv', state.nv);
 
-  // Vacant tint
   const tintInput = ctl('ctl-vc-tint');
   if (tintInput) tintInput.value = '#' + (state.vc.tint || '000000');
   const toInput = ctl('ctl-vc-to');
@@ -250,7 +252,6 @@ function syncControlsFromState() {
   const toVal = val('vc-to');
   if (toVal) toVal.textContent = (state.vc.to || 0).toFixed(2);
 
-  // Boundary
   const b = state.boundary;
   ctl('ctl-outline-enabled').checked = b.outlineEnabled;
   ctl('ctl-outline-color').value = b.outlineColor;
@@ -271,6 +272,26 @@ function syncControlsFromState() {
   val('shadow-radius').textContent = `${b.shadowRadius}px`;
   ctl('ctl-shadow-strength').value = b.shadowStrength;
   val('shadow-strength').textContent = b.shadowStrength.toFixed(2);
+
+  // CD controls
+  const cd = state.cd;
+  const setCDVal = (id, v) => { const el = ctl(id); if (el) el.value = v; };
+  const setCDTxt = (id, t) => { const el = val(id); if (el) el.textContent = t; };
+  if (ctl('ctl-cd-enabled')) ctl('ctl-cd-enabled').checked = cd.enabled;
+  setCDVal('ctl-cd-fill-color', cd.fillColor);
+  setCDVal('ctl-cd-fill-opacity', cd.fillOpacity);
+  setCDTxt('cd-fill-opacity', cd.fillOpacity.toFixed(2));
+  setCDVal('ctl-cd-stroke-color', cd.strokeColor);
+  setCDVal('ctl-cd-stroke-width', cd.strokeWidth);
+  setCDTxt('cd-stroke-width', `${cd.strokeWidth}px`);
+  setCDVal('ctl-cd-stroke-opacity', cd.strokeOpacity);
+  setCDTxt('cd-stroke-opacity', cd.strokeOpacity.toFixed(2));
+  setCDVal('ctl-cd-hover-fill', cd.hoverFillOpacity);
+  setCDTxt('cd-hover-fill', cd.hoverFillOpacity.toFixed(2));
+  setCDVal('ctl-cd-hover-stroke-w', cd.hoverStrokeWidth);
+  setCDTxt('cd-hover-stroke-w', `${cd.hoverStrokeWidth}px`);
+  setCDVal('ctl-cd-hover-stroke-o', cd.hoverStrokeOpacity);
+  setCDTxt('cd-hover-stroke-o', cd.hoverStrokeOpacity.toFixed(2));
 }
 
 // ── Presets ──────────────────────────────────────────
@@ -290,19 +311,16 @@ async function loadPresets() {
       const key = select.value;
       if (!key || !presets[key]) return;
       const p = presets[key];
-      // Merge preset values into state
       Object.assign(state.bm, { ...TREATMENT_DEFAULTS, ...(p.basemap || {}) });
       Object.assign(state.vc, { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS, ...(p.vacant || {}) });
       Object.assign(state.nv, { ...TREATMENT_DEFAULTS, ...(p.nonvacant || {}) });
       syncControlsFromState();
-      updateBasemapTiles();
-      updateVacantTiles();
-      updateNonVacantTiles();
+      updateProductTiles();
       exitCompare();
       select.value = '';
     });
   } catch {
-    // Backend not running — presets unavailable
+    // Backend not running
   }
 }
 
@@ -328,9 +346,7 @@ async function renderSnapshotList() {
       if (snap) {
         Object.assign(state, buildDefaultState(), snap.state);
         syncControlsFromState();
-        updateBasemapTiles();
-        updateVacantTiles();
-        updateNonVacantTiles();
+        updateProductTiles();
         applyBoundaryEffects();
         exitCompare();
       }
@@ -378,9 +394,7 @@ function wireSnapshots() {
       if (!result) { alert('Invalid snapshot file.'); return; }
       Object.assign(state, buildDefaultState(), result.active);
       syncControlsFromState();
-      updateBasemapTiles();
-      updateVacantTiles();
-      updateNonVacantTiles();
+      updateProductTiles();
       applyBoundaryEffects();
       if (result.snapshots.length) renderSnapshotList();
       exitCompare();
@@ -394,12 +408,8 @@ function wireSnapshots() {
 
 // ── Init ────────────────────────────────────────────
 async function init() {
-  const result = await createMap('map');
-  panes = result.panes;
-  boundary = result.boundary;
-  mapCtl = result;
+  mapCtl = await createMap('map');
 
-  // Load state or defaults
   const saved = await loadActiveState();
   state = buildDefaultState();
   if (saved && saved.bm) {
@@ -407,16 +417,24 @@ async function init() {
     Object.assign(state.vc, saved.vc);
     Object.assign(state.nv, saved.nv);
     if (saved.boundary) Object.assign(state.boundary, saved.boundary);
+    if (saved.cd) Object.assign(state.cd, saved.cd);
   }
 
   syncControlsFromState();
-  updateBasemapTiles();
-  updateVacantTiles();
-  updateNonVacantTiles();
+  updateProductTiles();
   applyBoundaryEffects();
   wireControls();
   wireSnapshots();
   loadPresets();
+
+  // Load CD layer
+  districtCtl = await addDistrictLayer(mapCtl.map, {
+    style: state.cd,
+    onSelect(boroCD) {
+      console.log('Playground: selected CD', boroCD);
+    },
+  });
+  updateCDVisibility();
 }
 
 init();

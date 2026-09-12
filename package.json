@@ -8,7 +8,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "leaflet": "^1.9.4",
     "maplibre-gl": "^6.6.0"
   },
   "devDependencies": {
