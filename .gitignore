@@ -2,10 +2,8 @@ config.local.yaml
 node_modules/
 dist/
 tiles/
-data/mask_overlay.png
-data/nonvacant_mask_overlay.png
-data/mask_overlay.json
 data/playground_snapshots.json
+data/cache/
 .DS_Store
 *.pyc
 __pycache__/

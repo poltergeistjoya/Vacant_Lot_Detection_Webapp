@@ -297,6 +297,60 @@
   display: block;
 }
 
+/* ── Parcel popup ───────────────────────────────────── */
+.maplibregl-popup.parcel-tooltip .maplibregl-popup-content {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.maplibregl-popup.parcel-tooltip .maplibregl-popup-tip {
+  display: none;
+}
+
+.parcel-cat {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.maplibregl-popup.parcel-popup .maplibregl-popup-content {
+  padding: 10px 12px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.parcel-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.parcel-table td {
+  padding: 3px 0;
+  vertical-align: top;
+}
+
+.parcel-table .pk {
+  color: var(--text-muted);
+  font-size: 11px;
+  padding-right: 10px;
+  white-space: nowrap;
+}
+
+.parcel-table .pv {
+  color: var(--text);
+  font-size: 12px;
+  word-break: break-word;
+}
+
 /* ── Legend ─────────────────────────────────────────── */
 .legend {
   display: flex;
