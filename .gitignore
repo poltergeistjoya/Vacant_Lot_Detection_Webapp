@@ -3,6 +3,7 @@ node_modules/
 dist/
 tiles/
 data/playground_snapshots.json
+data/cache/
 .DS_Store
 *.pyc
 __pycache__/

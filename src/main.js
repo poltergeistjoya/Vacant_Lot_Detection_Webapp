@@ -7,6 +7,7 @@ import {
   BRONX_CD_NAMES,
 } from './lib/layers.js';
 import { addDistrictLayer } from './lib/districts.js';
+import { addParcelLayer } from './lib/parcels.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
 
@@ -144,6 +145,7 @@ const LAYERS = [
   { id: 'naip',    label: 'NAIP Imagery',       defaultOn: false, tooltip: TOOLTIPS.naip },
   { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true,  tooltip: TOOLTIPS.overlay },
   { id: 'cd',      label: 'Community Districts', defaultOn: true,  tooltip: TOOLTIPS.cd },
+  { id: 'parcels', label: 'Parcel Ownership',    defaultOn: false, tooltip: TOOLTIPS.parcels },
 ];
 
 function buildLayerPanel() {
@@ -184,6 +186,10 @@ function toggleLayer(id, visible) {
     const vis = visible ? 'visible' : 'none';
     if (map.getLayer('cd-fill')) map.setLayoutProperty('cd-fill', 'visibility', vis);
     if (map.getLayer('cd-line')) map.setLayoutProperty('cd-line', 'visibility', vis);
+  } else if (id === 'parcels') {
+    const vis = visible ? 'visible' : 'none';
+    if (map.getLayer('parcel-fill')) map.setLayoutProperty('parcel-fill', 'visibility', vis);
+    if (map.getLayer('parcel-line')) map.setLayoutProperty('parcel-line', 'visibility', vis);
   }
 }
 
@@ -207,6 +213,7 @@ function onMapMove() {
 // ── Init ────────────────────────────────────────────
 map.on('load', () => {
   addCDLayer();
+  addParcelLayer(map);
   buildLayerPanel();
   loadThresholds();
   onMapMove();
