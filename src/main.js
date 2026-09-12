@@ -3,14 +3,12 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import {
   ESRI_BASEMAP_URL, ESRI_ATTRIBUTION, ESRI_METADATA_URL,
   BRONX_CENTER_LNG_LAT, DEFAULT_ZOOM, MIN_ZOOM, MAX_BOUNDS,
-  CHECKPOINTS, DEFAULT_THRESHOLD, NAIP_TILE_URL,
+  CHECKPOINTS, NAIP_TILE_URL,
   BRONX_CD_NAMES,
 } from './lib/layers.js';
 import { addDistrictLayer } from './lib/districts.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
-
-const IS_DEV = new URLSearchParams(window.location.search).has('dev');
 
 const defaultCP = CHECKPOINTS[getDefaultIndex()];
 let currentTStr = defaultCP.tStr;
@@ -135,16 +133,7 @@ function updateTileSource() {
     type: 'raster',
     source: 'product',
     layout: { visibility: wasVisible ? 'visible' : 'none' },
-  }, getDevInsertBefore());
-}
-
-function getDevInsertBefore() {
-  if (!IS_DEV) return undefined;
-  const devOrder = ['error', 'roads', 'parks-fill'];
-  for (const id of devOrder) {
-    if (map.getLayer(id)) return id;
-  }
-  return undefined;
+  });
 }
 
 // ── Layer panel ─────────────────────────────────────
@@ -156,11 +145,8 @@ const LAYERS = [
 
 function buildLayerPanel() {
   const panel = document.getElementById('layer-panel');
-  const allLayers = IS_DEV
-    ? [...LAYERS, { id: 'error', label: 'Error Map', defaultOn: false, tooltip: TOOLTIPS.error }]
-    : LAYERS;
 
-  allLayers.forEach(l => {
+  LAYERS.forEach(l => {
     const row = document.createElement('div');
     row.className = 'layer-row';
 
@@ -195,46 +181,7 @@ function toggleLayer(id, visible) {
     const vis = visible ? 'visible' : 'none';
     if (map.getLayer('cd-fill')) map.setLayoutProperty('cd-fill', 'visibility', vis);
     if (map.getLayer('cd-line')) map.setLayoutProperty('cd-line', 'visibility', vis);
-  } else if (IS_DEV) {
-    const vis = visible ? 'visible' : 'none';
-    if (id === 'parks') {
-      map.setLayoutProperty('parks-fill', 'visibility', vis);
-      map.setLayoutProperty('parks-line', 'visibility', vis);
-    } else if (map.getLayer(id)) {
-      map.setLayoutProperty(id, 'visibility', vis);
-    }
   }
-}
-
-// ── Dev-only layers ─────────────────────────────────
-function addDevLayers() {
-  if (!IS_DEV) return;
-
-  map.addSource('error', {
-    type: 'raster',
-    tiles: [`/tiles/${currentTStr}/error/{z}/{x}/{y}.png`],
-    tileSize: 256,
-  });
-  map.addLayer({
-    id: 'error',
-    type: 'raster',
-    source: 'error',
-    layout: { visibility: 'none' },
-    paint: { 'raster-opacity': 1 },
-  });
-
-  map.addSource('roads', { type: 'geojson', data: 'roads.geojson' });
-  map.addLayer({
-    id: 'roads',
-    type: 'line',
-    source: 'roads',
-    layout: { visibility: 'visible' },
-    paint: {
-      'line-color': '#141414',
-      'line-opacity': 0.55,
-      'line-width': ['interpolate', ['linear'], ['zoom'], 12, 1, 16, 2.5],
-    },
-  });
 }
 
 // ── Threshold change ────────────────────────────────
@@ -256,18 +203,12 @@ function onMapMove() {
 
 // ── Init ────────────────────────────────────────────
 map.on('load', () => {
-  addDevLayers();
   addCDLayer();
   buildLayerPanel();
   loadThresholds();
   onMapMove();
 
   map.on('moveend', onMapMove);
-
-  if (!IS_DEV) {
-    const legend = document.querySelector('.sidebar-section:last-child');
-    if (legend) legend.style.display = 'none';
-  }
 });
 
 async function addCDLayer() {

@@ -103,28 +103,27 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
   map.on('click', 'cd-fill', (e) => {
     if (e.features.length === 0) return;
     popup.remove();
-    const feat = e.features[0];
-    const id = feat.properties.BoroCD;
+    const id = e.features[0].properties.BoroCD;
 
-    const coords = [];
-    const extractCoords = (geometry) => {
-      if (geometry.type === 'Polygon') {
-        geometry.coordinates[0].forEach(c => coords.push(c));
-      } else if (geometry.type === 'MultiPolygon') {
-        geometry.coordinates.forEach(poly => poly[0].forEach(c => coords.push(c)));
+    const fullFeat = bronxFeatures.features.find(f => f.properties.BoroCD === id);
+    if (fullFeat) {
+      const coords = [];
+      const geom = fullFeat.geometry;
+      if (geom.type === 'Polygon') {
+        geom.coordinates[0].forEach(c => coords.push(c));
+      } else if (geom.type === 'MultiPolygon') {
+        geom.coordinates.forEach(poly => poly[0].forEach(c => coords.push(c)));
       }
-    };
-    extractCoords(feat.geometry);
-
-    if (coords.length > 0) {
-      const bounds = coords.reduce(
-        (b, c) => b.extend(c),
-        new maplibregl.LngLatBounds(coords[0], coords[0]),
-      );
-      map.fitBounds(bounds, { padding: 40, duration: 600 });
+      if (coords.length > 0) {
+        const bounds = coords.reduce(
+          (b, c) => b.extend(c),
+          new maplibregl.LngLatBounds(coords[0], coords[0]),
+        );
+        map.fitBounds(bounds, { padding: 40, duration: 600 });
+      }
     }
 
-    if (onSelect) onSelect(id, feat);
+    if (onSelect) onSelect(id, fullFeat || e.features[0]);
   });
 
   // ── Style update API ──
