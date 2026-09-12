@@ -149,8 +149,9 @@ function getDevInsertBefore() {
 
 // ── Layer panel ─────────────────────────────────────
 const LAYERS = [
-  { id: 'naip',    label: 'NAIP Imagery',  defaultOn: false, tooltip: TOOLTIPS.naip },
-  { id: 'overlay', label: 'Vacant Overlay', defaultOn: true,  tooltip: TOOLTIPS.overlay },
+  { id: 'naip',    label: 'NAIP Imagery',       defaultOn: false, tooltip: TOOLTIPS.naip },
+  { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true,  tooltip: TOOLTIPS.overlay },
+  { id: 'cd',      label: 'Community Districts', defaultOn: true,  tooltip: TOOLTIPS.cd },
 ];
 
 function buildLayerPanel() {
@@ -190,6 +191,10 @@ function toggleLayer(id, visible) {
     layerState[id] = visible;
     updateTileSource();
     updateFooter();
+  } else if (id === 'cd') {
+    const vis = visible ? 'visible' : 'none';
+    if (map.getLayer('cd-fill')) map.setLayoutProperty('cd-fill', 'visibility', vis);
+    if (map.getLayer('cd-line')) map.setLayoutProperty('cd-line', 'visibility', vis);
   } else if (IS_DEV) {
     const vis = visible ? 'visible' : 'none';
     if (id === 'parks') {

@@ -102,6 +102,7 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
   // ── Click → zoom ──
   map.on('click', 'cd-fill', (e) => {
     if (e.features.length === 0) return;
+    popup.remove();
     const feat = e.features[0];
     const id = feat.properties.BoroCD;
 
