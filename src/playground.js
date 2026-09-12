@@ -2,7 +2,6 @@ import { createMap } from './lib/map.js';
 import { addDistrictLayer } from './lib/districts.js';
 import {
   TREATMENT_DEFAULTS, VACANT_EXTRA_DEFAULTS, BOUNDARY_DEFAULTS,
-  CD_STYLE_DEFAULTS,
 } from './lib/layers.js';
 import {
   loadActiveState, saveActiveState,
@@ -16,6 +15,7 @@ const val = id => document.getElementById(`val-${id}`);
 let state, mapCtl, districtCtl;
 let comparingOriginal = false;
 let debounceTimer = null;
+let cdStyleDefaults = {};
 
 // ── State shape ─────────────────────────────────────
 function buildDefaultState() {
@@ -24,7 +24,7 @@ function buildDefaultState() {
     vc: { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS },
     nv: { ...TREATMENT_DEFAULTS },
     boundary: { ...BOUNDARY_DEFAULTS },
-    cd: { ...CD_STYLE_DEFAULTS, enabled: true },
+    cd: { ...cdStyleDefaults, enabled: true },
   };
 }
 
@@ -314,6 +314,11 @@ async function loadPresets() {
       Object.assign(state.bm, { ...TREATMENT_DEFAULTS, ...(p.basemap || {}) });
       Object.assign(state.vc, { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS, ...(p.vacant || {}) });
       Object.assign(state.nv, { ...TREATMENT_DEFAULTS, ...(p.nonvacant || {}) });
+      if (p.cd) {
+        Object.assign(state.cd, { ...cdStyleDefaults, enabled: true, ...p.cd });
+        if (districtCtl) districtCtl.updateStyle(state.cd);
+        updateCDVisibility();
+      }
       syncControlsFromState();
       updateProductTiles();
       exitCompare();
@@ -408,6 +413,12 @@ function wireSnapshots() {
 
 // ── Init ────────────────────────────────────────────
 async function init() {
+  try {
+    const resp = await fetch('product_treatment.json');
+    const treatment = await resp.json();
+    if (treatment.cd) cdStyleDefaults = treatment.cd;
+  } catch { /* use empty defaults */ }
+
   mapCtl = await createMap('map');
 
   const saved = await loadActiveState();

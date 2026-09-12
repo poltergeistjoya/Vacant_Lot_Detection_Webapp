@@ -4,9 +4,14 @@ export const ESRI_BASEMAP_URL =
 export const ESRI_ATTRIBUTION =
   'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
 
+export const ESRI_METADATA_URL =
+  'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/4/query';
+
 export const BRONX_CENTER = [40.8501, -73.8662];
 export const BRONX_CENTER_LNG_LAT = [-73.855, 40.855];
 export const DEFAULT_ZOOM = 13;
+export const MIN_ZOOM = 9;
+export const MAX_BOUNDS = [[-74.65, 40.3], [-73.05, 41.4]];
 
 // ── Playground constants ─────────────────────────────
 // Mask paths are in lib/map.js (not exported — only map.js loads them).
@@ -65,17 +70,6 @@ export const BRONX_CD_NAMES = {
   226: 'Van Cortlandt Park',
   227: 'Bronx Park / NY Botanical Garden',
   228: 'Pelham Bay Park',
-};
-
-export const CD_STYLE_DEFAULTS = {
-  fillColor: '#4fc3f7',
-  fillOpacity: 0.08,
-  strokeColor: '#4fc3f7',
-  strokeWidth: 2,
-  strokeOpacity: 0.6,
-  hoverFillOpacity: 0.25,
-  hoverStrokeWidth: 3.5,
-  hoverStrokeOpacity: 1.0,
 };
 
 // ── Product (MapLibre) constants ────────────────────

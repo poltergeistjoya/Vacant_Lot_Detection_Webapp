@@ -2,6 +2,7 @@ import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import {
   ESRI_ATTRIBUTION, BRONX_CENTER_LNG_LAT, DEFAULT_ZOOM,
+  MIN_ZOOM, MAX_BOUNDS,
 } from './layers.js';
 import { VacancyBoundary } from './overlay.js';
 
@@ -48,7 +49,9 @@ export async function createMap(containerId) {
     },
     center: BRONX_CENTER_LNG_LAT,
     zoom: DEFAULT_ZOOM,
+    minZoom: MIN_ZOOM,
     maxZoom: 18,
+    maxBounds: MAX_BOUNDS,
   });
 
   map.addControl(new maplibregl.NavigationControl(), 'bottom-right');

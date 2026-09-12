@@ -526,10 +526,59 @@ async def product_tile(
                     headers={"Cache-Control": cache})
 
 
+def _color_params_to_aliases(params: dict) -> dict:
+    """Convert apply_color_ops param names to playground short aliases."""
+    mapping = {
+        "sig_contrast": "sc", "sig_bias": "sb",
+        "gam_master": "g", "gam_r": "gr", "gam_g": "gg", "gam_b": "gb",
+        "sat": "sat", "grayscale": "gray", "brightness": "br",
+    }
+    return {mapping.get(k, k): v for k, v in params.items() if k in mapping}
+
+
+_STATIC_PRESETS = {
+    "planning_view": {
+        "label": "Planning View",
+        "basemap": {"gray": 0.8, "br": 0.9},
+        "vacant": {"br": 1.3, "sat": 1.4},
+        "nonvacant": {"gray": 1.0, "br": 0.7},
+    },
+    "high_contrast": {
+        "label": "High Contrast",
+        "basemap": {"sc": 15, "sb": 0.5},
+        "vacant": {"sc": 20, "sb": 0.4, "sat": 1.5},
+        "nonvacant": {"sc": 10, "sb": 0.6, "gray": 0.5},
+    },
+    "satellite_clean": {
+        "label": "Satellite Clean",
+        "basemap": {"sc": 8, "sb": 0.45, "sat": 1.2, "g": 0.9},
+        "vacant": {},
+        "nonvacant": {},
+    },
+    "dark_mode": {
+        "label": "Dark Mode",
+        "basemap": {"br": 0.4, "sc": 5, "sb": 0.3},
+        "vacant": {"br": 0.8, "tint": "1a1a2e", "to": 0.3},
+        "nonvacant": {"br": 0.3, "gray": 0.6},
+    },
+}
+
+
 @app.get("/api/presets")
 def list_presets():
-    """Return available treatment presets."""
-    return PRESETS
+    """Return presets: production from config file + static exploration presets."""
+    treatment = json.loads((DATA_DIR / "product_treatment.json").read_text())
+    presets = {
+        "production": {
+            "label": "Production (" + treatment.get("name", "default") + ")",
+            "basemap": _color_params_to_aliases(treatment.get("basemap", {})),
+            "vacant": _color_params_to_aliases(treatment.get("vacant", {})),
+            "nonvacant": _color_params_to_aliases(treatment.get("nonvacant", {})),
+            "cd": treatment.get("cd", {}),
+        },
+    }
+    presets.update(_STATIC_PRESETS)
+    return presets
 
 
 # ── Snapshot persistence ─────────────────────────────
@@ -591,41 +640,3 @@ def delete_snapshot_endpoint(name: str):
 
 # ── Presets ──────────────────────────────────────────
 
-PRESETS = {
-    "default": {
-        "label": "Default",
-        "basemap": {},
-        "vacant": {},
-        "nonvacant": {},
-    },
-    "planning_view": {
-        "label": "Planning View",
-        "basemap": {"gray": 0.8, "br": 0.9},
-        "vacant": {"br": 1.3, "sat": 1.4},
-        "nonvacant": {"gray": 1.0, "br": 0.7},
-    },
-    "high_contrast": {
-        "label": "High Contrast",
-        "basemap": {"sc": 15, "sb": 0.5},
-        "vacant": {"sc": 20, "sb": 0.4, "sat": 1.5},
-        "nonvacant": {"sc": 10, "sb": 0.6, "gray": 0.5},
-    },
-    "satellite_clean": {
-        "label": "Satellite Clean",
-        "basemap": {"sc": 8, "sb": 0.45, "sat": 1.2, "g": 0.9},
-        "vacant": {},
-        "nonvacant": {},
-    },
-    "dark_mode": {
-        "label": "Dark Mode",
-        "basemap": {"br": 0.4, "sc": 5, "sb": 0.3},
-        "vacant": {"br": 0.8, "tint": "1a1a2e", "to": 0.3},
-        "nonvacant": {"br": 0.3, "gray": 0.6},
-    },
-    "vacant_highlight": {
-        "label": "Vacant Highlight",
-        "basemap": {"gray": 0.6, "br": 0.8},
-        "vacant": {"sat": 1.8, "br": 1.2, "sc": 10, "sb": 0.5},
-        "nonvacant": {"gray": 0.9, "br": 0.6},
-    },
-}

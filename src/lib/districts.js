@@ -1,5 +1,5 @@
 import * as maplibregl from 'maplibre-gl';
-import { CD_GEOJSON_URL, BRONX_CD_NAMES, CD_STYLE_DEFAULTS } from './layers.js';
+import { CD_GEOJSON_URL, BRONX_CD_NAMES } from './layers.js';
 
 /**
  * Add Community District boundaries to a MapLibre map.
@@ -23,7 +23,7 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
     promoteId: 'BoroCD',
   });
 
-  const s = { ...CD_STYLE_DEFAULTS, ...styleOverrides };
+  const s = { ...styleOverrides };
 
   map.addLayer({
     id: 'cd-fill',
