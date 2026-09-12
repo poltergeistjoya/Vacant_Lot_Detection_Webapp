@@ -21,8 +21,8 @@ cp config.template.yaml config.local.yaml
 cd scripts && uv run prepare_mask_overlay.py --all && cd ..
 
 # Start the backend + frontend
-uv run main.py &                     # FastAPI backend on :8000
-npm run dev                          # Vite dev server on :5173
+uv run uvicorn server.app:app --reload &  # FastAPI backend on :8000
+npm run dev                               # Vite dev server on :5173
 ```
 
 Open http://localhost:5173 in your browser.
