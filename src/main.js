@@ -36,7 +36,8 @@ const map = new maplibregl.Map({
   center: BRONX_CENTER_LNG_LAT,
   zoom: DEFAULT_ZOOM,
   maxZoom: 18,
-});
+}); 
+window.DEBUG_MAP = map;
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
