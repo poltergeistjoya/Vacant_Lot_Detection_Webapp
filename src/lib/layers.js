@@ -4,14 +4,17 @@ export const ESRI_BASEMAP_URL =
 export const ESRI_ATTRIBUTION =
   'Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community';
 
+export const ESRI_METADATA_URL =
+  'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/4/query';
+
 export const BRONX_CENTER = [40.8501, -73.8662];
 export const BRONX_CENTER_LNG_LAT = [-73.855, 40.855];
 export const DEFAULT_ZOOM = 13;
+export const MIN_ZOOM = 9;
+export const MAX_BOUNDS = [[-74.65, 40.3], [-73.05, 41.4]];
 
-// ── Playground (Leaflet) constants ──────────────────
-export const MASK_PNG_URL = 'mask_overlay.png';
-export const NONVACANT_MASK_PNG_URL = 'nonvacant_mask_overlay.png';
-export const MASK_BOUNDS_URL = 'mask_overlay.json';
+// ── Playground constants ─────────────────────────────
+// Mask paths are in lib/map.js (not exported — only map.js loads them).
 
 // Treatment defaults — each group has the same color-op knobs.
 // Keys match the backend query parameter aliases.
@@ -46,6 +49,27 @@ export const BOUNDARY_DEFAULTS = {
   shadowEnabled: false,
   shadowRadius: 12,
   shadowStrength: 0.5,
+};
+
+// ── Community District constants ─────────────────────
+export const CD_GEOJSON_URL = 'community_districts.geojson';
+
+export const BRONX_CD_NAMES = {
+  201: 'Mott Haven / Melrose',
+  202: 'Hunts Point / Longwood',
+  203: 'Morrisania / Crotona',
+  204: 'Highbridge / Concourse',
+  205: 'Fordham / University Heights',
+  206: 'Belmont / East Tremont',
+  207: 'Kingsbridge / Riverdale',
+  208: 'Riverdale / Fieldston',
+  209: 'Parkchester / Soundview',
+  210: 'Throgs Neck / Co-op City',
+  211: 'Morris Park / Pelham Parkway',
+  212: 'Williamsbridge / Baychester',
+  226: 'Van Cortlandt Park',
+  227: 'Bronx Park / NY Botanical Garden',
+  228: 'Pelham Bay Park',
 };
 
 // ── Product (MapLibre) constants ────────────────────

@@ -87,36 +87,7 @@
   min-width: 0;
 }
 
-/* MapLibre overrides */
-.maplibregl-ctrl-attrib {
-  font-family: var(--font) !important;
-  font-size: 10px !important;
-  background: rgba(15, 17, 23, 0.75) !important;
-  color: var(--text-dim) !important;
-  backdrop-filter: blur(8px);
-}
-.maplibregl-ctrl-attrib a {
-  color: var(--text-muted) !important;
-}
-.maplibregl-ctrl-group {
-  border: 1px solid var(--border) !important;
-  border-radius: var(--radius) !important;
-  overflow: hidden;
-  backdrop-filter: blur(12px);
-}
-.maplibregl-ctrl-group button {
-  background: rgba(24, 26, 32, 0.85) !important;
-  color: var(--text) !important;
-  border-color: var(--border) !important;
-  width: 32px !important;
-  height: 32px !important;
-}
-.maplibregl-ctrl-group button:hover {
-  background: rgba(30, 32, 40, 0.95) !important;
-}
-.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
-  filter: invert(1) brightness(0.85);
-}
+/* MapLibre overrides are in base.css */
 
 /* ── Footer ────────────────────────────────────────── */
 .app-footer {

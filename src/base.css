@@ -30,54 +30,55 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Fix tile seams — the half-pixel gaps between Leaflet tiles */
-.seamless-tiles .leaflet-tile {
-  outline: 1px solid transparent;
-  will-change: transform;
-  backface-visibility: hidden;
-}
-
-.leaflet-tile-container {
-  will-change: transform;
-  backface-visibility: hidden;
-}
-
-/* Suppress Leaflet's default border on tile images */
-.leaflet-container img.leaflet-tile {
-  outline: none;
-  border: none;
-}
-
-/* Clean up Leaflet attribution */
-.leaflet-control-attribution {
+/* ── MapLibre overrides (shared by main + playground) ── */
+.maplibregl-ctrl-attrib {
   font-family: var(--font) !important;
   font-size: 10px !important;
   background: rgba(15, 17, 23, 0.75) !important;
   color: var(--text-dim) !important;
   backdrop-filter: blur(8px);
-  border: none !important;
 }
-.leaflet-control-attribution a {
+.maplibregl-ctrl-attrib a {
   color: var(--text-muted) !important;
 }
-
-/* Zoom controls */
-.leaflet-control-zoom {
+.maplibregl-ctrl-group {
   border: 1px solid var(--border) !important;
   border-radius: var(--radius) !important;
   overflow: hidden;
   backdrop-filter: blur(12px);
 }
-.leaflet-control-zoom a {
+.maplibregl-ctrl-group button {
   background: rgba(24, 26, 32, 0.85) !important;
   color: var(--text) !important;
   border-color: var(--border) !important;
   width: 32px !important;
   height: 32px !important;
-  line-height: 32px !important;
-  font-size: 16px !important;
 }
-.leaflet-control-zoom a:hover {
+.maplibregl-ctrl-group button:hover {
   background: rgba(30, 32, 40, 0.95) !important;
-  color: var(--accent) !important;
+}
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1) brightness(0.85);
+}
+
+/* ── MapLibre popup (used for CD labels) ── */
+.maplibregl-popup-content {
+  background: rgba(20, 22, 30, 0.92) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text) !important;
+  font-family: var(--font) !important;
+  font-size: 12px !important;
+  font-weight: 500 !important;
+  padding: 6px 10px !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4) !important;
+}
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+  border-top-color: rgba(20, 22, 30, 0.92) !important;
+}
+.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+  border-bottom-color: rgba(20, 22, 30, 0.92) !important;
+}
+.maplibregl-popup-close-button {
+  display: none;
 }

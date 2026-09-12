@@ -438,40 +438,147 @@ async def nonvacant_tile(
                     headers={"Cache-Control": "public, max-age=300"})
 
 
+def _aliases_to_color_params(
+    sc=0, sb=0.5, g=1.0, gr=1.0, gg=1.0, gb=1.0,
+    sat=1.0, gray=0.0, br=1.0, tint="000000", to=0.0,
+):
+    """Convert short alias names (used by the playground UI) to apply_color_ops kwargs."""
+    tc = str(tint).lstrip("#")
+    return dict(
+        sig_contrast=float(sc), sig_bias=float(sb),
+        gam_master=float(g), gam_r=float(gr), gam_g=float(gg), gam_b=float(gb),
+        sat=float(sat), grayscale=float(gray), brightness=float(br),
+        tint_r=int(tc[0:2], 16) if len(tc) >= 6 else 0,
+        tint_g=int(tc[2:4], 16) if len(tc) >= 6 else 0,
+        tint_b=int(tc[4:6], 16) if len(tc) >= 6 else 0,
+        tint_opacity=float(to),
+    )
+
+
 @app.get("/api/tile/product/{z}/{x}/{y}.png")
 async def product_tile(
     z: int, x: int, y: int,
     t: str = Query("t0298"),
+    mode: str = Query(None),
+    # Basemap treatment (playground mode)
+    bm_sc: float = Query(0), bm_sb: float = Query(0.5),
+    bm_g: float = Query(1), bm_gr: float = Query(1),
+    bm_gg: float = Query(1), bm_gb: float = Query(1),
+    bm_sat: float = Query(1), bm_gray: float = Query(0),
+    bm_br: float = Query(1),
+    # Vacant treatment (playground mode)
+    vc_sc: float = Query(0), vc_sb: float = Query(0.5),
+    vc_g: float = Query(1), vc_gr: float = Query(1),
+    vc_gg: float = Query(1), vc_gb: float = Query(1),
+    vc_sat: float = Query(1), vc_gray: float = Query(0),
+    vc_br: float = Query(1),
+    vc_tint: str = Query("000000"), vc_to: float = Query(0),
+    # Non-vacant treatment (playground mode)
+    nv_sc: float = Query(0), nv_sb: float = Query(0.5),
+    nv_g: float = Query(1), nv_gr: float = Query(1),
+    nv_gg: float = Query(1), nv_gb: float = Query(1),
+    nv_sat: float = Query(1), nv_gray: float = Query(0),
+    nv_br: float = Query(1),
 ):
-    """Return a composited tile with basemap/vacant/non-vacant treatments baked in."""
+    """Return a composited tile with basemap/vacant/non-vacant treatments.
+
+    Without mode=playground, uses the baked-in treatments from product_treatment.json.
+    With mode=playground, uses the query-string treatment params (identity defaults).
+    """
     tile_bytes = await fetch_esri_tile(z, x, y)
     arr = tile_bytes_to_array(tile_bytes)
+
+    if mode == "playground":
+        bm_kwargs = _aliases_to_color_params(
+            sc=bm_sc, sb=bm_sb, g=bm_g, gr=bm_gr, gg=bm_gg, gb=bm_gb,
+            sat=bm_sat, gray=bm_gray, br=bm_br,
+        )
+        vc_kwargs = _aliases_to_color_params(
+            sc=vc_sc, sb=vc_sb, g=vc_g, gr=vc_gr, gg=vc_gg, gb=vc_gb,
+            sat=vc_sat, gray=vc_gray, br=vc_br, tint=vc_tint, to=vc_to,
+        )
+        nv_kwargs = _aliases_to_color_params(
+            sc=nv_sc, sb=nv_sb, g=nv_g, gr=nv_gr, gg=nv_gg, gb=nv_gb,
+            sat=nv_sat, gray=nv_gray, br=nv_br,
+        )
+    else:
+        bm_kwargs = PRODUCT_BM
+        vc_kwargs = PRODUCT_VC
+        nv_kwargs = PRODUCT_NV
 
     vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t)
 
     if vacant_mask is None:
-        # Tile is outside the mask — apply basemap treatment only
-        result = apply_color_ops(arr, **PRODUCT_BM)
+        result = apply_color_ops(arr, **bm_kwargs)
         return Response(content=array_to_png(result), media_type="image/png",
                         headers={"Cache-Control": "public, max-age=3600"})
 
-    bm_arr = apply_color_ops(arr.copy(), **PRODUCT_BM)
-    vc_arr = apply_color_ops(arr.copy(), **PRODUCT_VC)
-    nv_arr = apply_color_ops(arr.copy(), **PRODUCT_NV)
+    bm_arr = apply_color_ops(arr.copy(), **bm_kwargs)
+    vc_arr = apply_color_ops(arr.copy(), **vc_kwargs)
+    nv_arr = apply_color_ops(arr.copy(), **nv_kwargs)
 
-    # Composite: vacant pixels get vc, non-vacant get nv, rest get bm
     result = bm_arr
     result[:, nonvacant_mask] = nv_arr[:, nonvacant_mask]
     result[:, vacant_mask] = vc_arr[:, vacant_mask]
 
+    cache = "no-cache" if mode == "playground" else "public, max-age=3600"
     return Response(content=array_to_png(result), media_type="image/png",
-                    headers={"Cache-Control": "public, max-age=3600"})
+                    headers={"Cache-Control": cache})
+
+
+def _color_params_to_aliases(params: dict) -> dict:
+    """Convert apply_color_ops param names to playground short aliases."""
+    mapping = {
+        "sig_contrast": "sc", "sig_bias": "sb",
+        "gam_master": "g", "gam_r": "gr", "gam_g": "gg", "gam_b": "gb",
+        "sat": "sat", "grayscale": "gray", "brightness": "br",
+    }
+    return {mapping.get(k, k): v for k, v in params.items() if k in mapping}
+
+
+_STATIC_PRESETS = {
+    "planning_view": {
+        "label": "Planning View",
+        "basemap": {"gray": 0.8, "br": 0.9},
+        "vacant": {"br": 1.3, "sat": 1.4},
+        "nonvacant": {"gray": 1.0, "br": 0.7},
+    },
+    "high_contrast": {
+        "label": "High Contrast",
+        "basemap": {"sc": 15, "sb": 0.5},
+        "vacant": {"sc": 20, "sb": 0.4, "sat": 1.5},
+        "nonvacant": {"sc": 10, "sb": 0.6, "gray": 0.5},
+    },
+    "satellite_clean": {
+        "label": "Satellite Clean",
+        "basemap": {"sc": 8, "sb": 0.45, "sat": 1.2, "g": 0.9},
+        "vacant": {},
+        "nonvacant": {},
+    },
+    "dark_mode": {
+        "label": "Dark Mode",
+        "basemap": {"br": 0.4, "sc": 5, "sb": 0.3},
+        "vacant": {"br": 0.8, "tint": "1a1a2e", "to": 0.3},
+        "nonvacant": {"br": 0.3, "gray": 0.6},
+    },
+}
 
 
 @app.get("/api/presets")
 def list_presets():
-    """Return available treatment presets."""
-    return PRESETS
+    """Return presets: production from config file + static exploration presets."""
+    treatment = json.loads((DATA_DIR / "product_treatment.json").read_text())
+    presets = {
+        "production": {
+            "label": "Production (" + treatment.get("name", "default") + ")",
+            "basemap": _color_params_to_aliases(treatment.get("basemap", {})),
+            "vacant": _color_params_to_aliases(treatment.get("vacant", {})),
+            "nonvacant": _color_params_to_aliases(treatment.get("nonvacant", {})),
+            "cd": treatment.get("cd", {}),
+        },
+    }
+    presets.update(_STATIC_PRESETS)
+    return presets
 
 
 # ── Snapshot persistence ─────────────────────────────
@@ -533,41 +640,3 @@ def delete_snapshot_endpoint(name: str):
 
 # ── Presets ──────────────────────────────────────────
 
-PRESETS = {
-    "default": {
-        "label": "Default",
-        "basemap": {},
-        "vacant": {},
-        "nonvacant": {},
-    },
-    "planning_view": {
-        "label": "Planning View",
-        "basemap": {"gray": 0.8, "br": 0.9},
-        "vacant": {"br": 1.3, "sat": 1.4},
-        "nonvacant": {"gray": 1.0, "br": 0.7},
-    },
-    "high_contrast": {
-        "label": "High Contrast",
-        "basemap": {"sc": 15, "sb": 0.5},
-        "vacant": {"sc": 20, "sb": 0.4, "sat": 1.5},
-        "nonvacant": {"sc": 10, "sb": 0.6, "gray": 0.5},
-    },
-    "satellite_clean": {
-        "label": "Satellite Clean",
-        "basemap": {"sc": 8, "sb": 0.45, "sat": 1.2, "g": 0.9},
-        "vacant": {},
-        "nonvacant": {},
-    },
-    "dark_mode": {
-        "label": "Dark Mode",
-        "basemap": {"br": 0.4, "sc": 5, "sb": 0.3},
-        "vacant": {"br": 0.8, "tint": "1a1a2e", "to": 0.3},
-        "nonvacant": {"br": 0.3, "gray": 0.6},
-    },
-    "vacant_highlight": {
-        "label": "Vacant Highlight",
-        "basemap": {"gray": 0.6, "br": 0.8},
-        "vacant": {"sat": 1.8, "br": 1.2, "sc": 10, "sb": 0.5},
-        "nonvacant": {"gray": 0.9, "br": 0.6},
-    },
-}

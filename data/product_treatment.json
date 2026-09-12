@@ -1,5 +1,5 @@
 {
-  "name": "final_vacant_highlight_best",
+  "name": "final_cd_highlight",
   "basemap": {
     "grayscale": 0.6,
     "brightness": 0.8
@@ -17,5 +17,15 @@
   "nonvacant": {
     "grayscale": 1.0,
     "brightness": 0.52
+  },
+  "cd": {
+    "fillColor": "#b4ddee",
+    "fillOpacity": 0,
+    "strokeColor": "#b2bf4a",
+    "strokeWidth": 2,
+    "strokeOpacity": 0.18,
+    "hoverFillOpacity": 0,
+    "hoverStrokeWidth": 4,
+    "hoverStrokeOpacity": 1.0
   }
 }
