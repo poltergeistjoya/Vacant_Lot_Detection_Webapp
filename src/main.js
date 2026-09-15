@@ -18,9 +18,12 @@ let currentTStr = defaultCP.tStr;
 const layerState = {
   overlay: true,
   naip: false,
+  parcels: false,
 };
 
 let selectedCD = null;
+let parcelCount = 0;
+let plutoVersion = '';
 let imagerySource = 'Esri World Imagery';
 
 const MONTHS = [
@@ -63,22 +66,31 @@ async function fetchImageryInfo(lng, lat, zoom) {
 
 // ── Footer ────────────────────────────────────────
 function updateFooter() {
-  const parts = ['U-Net (ResNet-34)'];
+  const sources = [];
+
+  sources.push('U-Net (ResNet-34)');
 
   if (layerState.naip) {
-    parts.push('NAIP 2022 · 60 cm/px');
+    sources.push('NAIP 2022 · 60 cm/px');
   } else {
-    parts.push(imagerySource);
+    sources.push(imagerySource);
   }
+
+  if (layerState.parcels) {
+    const ver = plutoVersion ? ` · ${plutoVersion}` : '';
+    sources.push(`MapPLUTO${ver}`);
+  }
+
+  let text = sources.join(' | ');
 
   if (selectedCD) {
     const cdNum = selectedCD % 100;
     const name = BRONX_CD_NAMES[selectedCD] || `District ${cdNum}`;
-    parts.push(`CD ${cdNum} — ${name}`);
+    text += ` · CD ${cdNum} — ${name}`;
   }
 
   const el = document.getElementById('footer-info');
-  if (el) el.textContent = parts.join(' · ');
+  if (el) el.textContent = text;
 }
 
 // ── Map ─────────────────────────────────────────────
@@ -170,10 +182,37 @@ function buildLayerPanel() {
     const tip = document.createElement('span');
     tip.className = 'tooltip-chip';
     tip.textContent = '?';
-    tip.title = l.tooltip;
+    const tipText = document.createElement('span');
+    tipText.className = 'tooltip-text';
+    tipText.textContent = l.tooltip;
+    tip.append(tipText);
 
     row.append(cb, label, tip);
     panel.append(row);
+
+    if (l.id === 'parcels') {
+      const countRow = document.createElement('div');
+      countRow.id = 'parcel-count-row';
+      countRow.className = 'layer-stat';
+      countRow.hidden = true;
+
+      const countLabel = document.createElement('span');
+      countLabel.textContent = 'Vacant Lots Found ';
+
+      const countValue = document.createElement('strong');
+      countValue.id = 'parcel-count-value';
+
+      const countTip = document.createElement('span');
+      countTip.className = 'tooltip-chip';
+      countTip.textContent = '?';
+      const countTipText = document.createElement('span');
+      countTipText.className = 'tooltip-text';
+      countTipText.textContent = 'Vacant lots found by model or recorded in MapPLUTO';
+      countTip.append(countTipText);
+
+      countRow.append(countLabel, countValue, countTip);
+      panel.append(countRow);
+    }
   });
 }
 
@@ -187,9 +226,13 @@ function toggleLayer(id, visible) {
     if (map.getLayer('cd-fill')) map.setLayoutProperty('cd-fill', 'visibility', vis);
     if (map.getLayer('cd-line')) map.setLayoutProperty('cd-line', 'visibility', vis);
   } else if (id === 'parcels') {
+    layerState.parcels = visible;
     const vis = visible ? 'visible' : 'none';
     if (map.getLayer('parcel-fill')) map.setLayoutProperty('parcel-fill', 'visibility', vis);
     if (map.getLayer('parcel-line')) map.setLayoutProperty('parcel-line', 'visibility', vis);
+    const countRow = document.getElementById('parcel-count-row');
+    if (countRow) countRow.hidden = !visible;
+    updateFooter();
   }
 }
 
@@ -213,7 +256,14 @@ function onMapMove() {
 // ── Init ────────────────────────────────────────────
 map.on('load', () => {
   addCDLayer();
-  addParcelLayer(map);
+  addParcelLayer(map).then(info => {
+    if (info) {
+      parcelCount = info.count;
+      plutoVersion = info.version;
+      const val = document.getElementById('parcel-count-value');
+      if (val) val.textContent = parcelCount.toLocaleString();
+    }
+  });
   buildLayerPanel();
   loadThresholds();
   onMapMove();

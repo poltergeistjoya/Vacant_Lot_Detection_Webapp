@@ -34,14 +34,39 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DATA = _REPO_ROOT / "data"
 _CACHE = _DATA / "cache"
 
-PLUTO_API = "https://data.cityofnewyork.us/resource/64uk-42ks.geojson"
-PLUTO_WHERE = "borocode='2'"
-PLUTO_FIELDS = "bbl,address,ownername,ownertype,lotarea,zonedist1,landuse,the_geom"
-PLUTO_LIMIT = 200000
+ARCGIS_URL = (
+    "https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services"
+    "/MAPPLUTO/FeatureServer/0/query"
+)
+ARCGIS_FIELDS = "BBL,Address,OwnerName,OwnerType,LotArea,ZoneDist1,LandUse"
+ARCGIS_PAGE_SIZE = 2000
 
 DST_CRS = "EPSG:4326"
 MAX_DIM = 4000
 DEFAULT_THRESHOLD = 0.298
+PIXEL_COVERAGE_THRESHOLD = 0.20
+
+
+ARCGIS_SERVICE_URL = (
+    "https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services"
+    "/MAPPLUTO/FeatureServer/0"
+)
+
+
+def _fetch_pluto_version() -> str:
+    """Query the ArcGIS service metadata for the last edit date."""
+    try:
+        url = f"{ARCGIS_SERVICE_URL}?f=json"
+        with urllib.request.urlopen(url, timeout=15) as resp:
+            meta = json.loads(resp.read())
+        ts = meta.get("editingInfo", {}).get("dataLastEditDate")
+        if ts:
+            from datetime import datetime, timezone
+            dt = datetime.fromtimestamp(ts / 1000, tz=timezone.utc)
+            return dt.strftime("%Y-%m-%d")
+    except Exception:
+        pass
+    return "unknown"
 
 
 def _fetch_pluto(cache_path: Path) -> dict:
@@ -50,26 +75,41 @@ def _fetch_pluto(cache_path: Path) -> dict:
         with cache_path.open() as f:
             return json.load(f)
 
-    print("Downloading Bronx MapPLUTO from NYC Open Data…")
-    params = urllib.parse.urlencode({
-        "$where": PLUTO_WHERE,
-        "$select": PLUTO_FIELDS,
-        "$limit": PLUTO_LIMIT,
-    })
-    url = f"{PLUTO_API}?{params}"
-    try:
-        with urllib.request.urlopen(url, timeout=120) as resp:
-            data = json.loads(resp.read())
-    except Exception as exc:
-        print(f"WARNING: MapPLUTO download failed ({exc}).\n"
-              "Parcel layer will be unavailable. Check network and retry.", file=sys.stderr)
-        sys.exit(1)
+    print("Downloading Bronx MapPLUTO from ArcGIS FeatureServer…")
+    all_features = []
+    offset = 0
+    while True:
+        params = urllib.parse.urlencode({
+            "where": "BoroCode=2",
+            "outFields": ARCGIS_FIELDS,
+            "f": "geojson",
+            "resultRecordCount": ARCGIS_PAGE_SIZE,
+            "resultOffset": offset,
+        })
+        url = f"{ARCGIS_URL}?{params}"
+        try:
+            with urllib.request.urlopen(url, timeout=120) as resp:
+                data = json.loads(resp.read())
+        except Exception as exc:
+            print(f"WARNING: MapPLUTO download failed at offset {offset} ({exc}).\n"
+                  "Parcel layer will be unavailable. Check network and retry.",
+                  file=sys.stderr)
+            sys.exit(1)
 
+        feats = data.get("features", [])
+        all_features.extend(feats)
+        print(f"  fetched {len(feats)} features (total: {len(all_features)})")
+        exceeded = data.get("properties", {}).get("exceededTransferLimit", False)
+        if not exceeded or len(feats) < ARCGIS_PAGE_SIZE:
+            break
+        offset += len(feats)
+
+    fc = {"type": "FeatureCollection", "features": all_features}
     _CACHE.mkdir(parents=True, exist_ok=True)
     with cache_path.open("w") as f:
-        json.dump(data, f)
-    print(f"Cached {len(data.get('features', []))} features → {cache_path}")
-    return data
+        json.dump(fc, f)
+    print(f"Cached {len(all_features)} features → {cache_path}")
+    return fc
 
 
 def _load_prediction_grid(prediction_tif: Path):
@@ -105,14 +145,18 @@ def _load_prediction_grid(prediction_tif: Path):
 
 
 def _find_model_vacant_bbls(features, is_vacant, dst_transform, dst_h, dst_w):
-    """Return set of BBLs whose polygons overlap at least one vacant pixel."""
+    """Return set of BBLs with >= PIXEL_COVERAGE_THRESHOLD vacant pixel fraction."""
     print(f"Rasterizing {len(features)} parcel polygons onto prediction grid…")
 
     bbl_list = []
     burn_shapes = []
     for i, feat in enumerate(features):
-        bbl = feat["properties"].get("bbl")
-        geom = shape(feat["geometry"])
+        bbl = feat["properties"].get("BBL")
+        geom_raw = feat.get("geometry")
+        if geom_raw is None:
+            bbl_list.append(bbl)
+            continue
+        geom = shape(geom_raw)
         if not geom.is_valid:
             geom = geom.buffer(0)
         bbl_list.append(bbl)
@@ -129,9 +173,25 @@ def _find_model_vacant_bbls(features, is_vacant, dst_transform, dst_h, dst_w):
         dtype="int32",
     )
 
-    vacant_indices = np.unique(burn[is_vacant])
-    vacant_indices = vacant_indices[vacant_indices > 0]
-    return {bbl_list[i - 1] for i in vacant_indices}
+    # Count total pixels and vacant pixels per parcel
+    parcel_ids = np.unique(burn)
+    parcel_ids = parcel_ids[parcel_ids > 0]
+
+    total_counts = np.bincount(burn.ravel())
+    vacant_counts = np.bincount(burn[is_vacant].ravel(), minlength=len(total_counts))
+
+    vacant_bbls = set()
+    for pid in parcel_ids:
+        total = total_counts[pid]
+        if total == 0:
+            continue
+        frac = vacant_counts[pid] / total
+        if frac >= PIXEL_COVERAGE_THRESHOLD:
+            vacant_bbls.add(bbl_list[pid - 1])
+
+    print(f"  {len(vacant_bbls)} parcels meet {PIXEL_COVERAGE_THRESHOLD:.0%} "
+          f"pixel coverage threshold (of {len(parcel_ids)} with any overlap).")
+    return vacant_bbls
 
 
 def _classify(pluto_vacant: bool, model_vacant: bool) -> str:
@@ -158,11 +218,10 @@ def main(skip_model, force_download):
     features = pluto.get("features", [])
     print(f"Loaded {len(features)} Bronx parcels from MapPLUTO.")
 
-    # Identify PLUTO-recorded vacant lots (LandUse == "11")
     pluto_vacant_bbls = {
-        f["properties"].get("bbl")
+        f["properties"].get("BBL")
         for f in features
-        if f["properties"].get("landuse") == "11"
+        if f["properties"].get("LandUse") == "11"
     }
     print(f"  {len(pluto_vacant_bbls)} parcels recorded as vacant (LandUse=11).")
 
@@ -189,13 +248,16 @@ def main(skip_model, force_download):
     out_features = []
     for feat in features:
         props = feat["properties"]
-        bbl = props.get("bbl")
+        bbl = props.get("BBL")
         is_pluto = bbl in pluto_vacant_bbls
         is_model = bbl in model_vacant_bbls
         if not (is_pluto or is_model):
             continue
 
-        geom = shape(feat["geometry"])
+        geom_raw = feat.get("geometry")
+        if geom_raw is None:
+            continue
+        geom = shape(geom_raw)
         if not geom.is_valid:
             geom = geom.buffer(0)
         geom = geom.simplify(0.00001, preserve_topology=True)
@@ -205,20 +267,27 @@ def main(skip_model, force_download):
             "geometry": mapping(geom),
             "properties": {
                 "bbl": bbl,
-                "address": props.get("address", ""),
-                "owner_name": props.get("ownername", ""),
-                "owner_type": props.get("ownertype", ""),
-                "lot_area": props.get("lotarea"),
-                "zoning": props.get("zonedist1", ""),
-                "land_use": props.get("landuse", ""),
+                "address": props.get("Address", ""),
+                "owner_name": props.get("OwnerName", ""),
+                "owner_type": props.get("OwnerType", ""),
+                "lot_area": props.get("LotArea"),
+                "zoning": props.get("ZoneDist1", ""),
+                "land_use": props.get("LandUse", ""),
                 "vacancy_category": _classify(is_pluto, is_model),
                 "pluto_vacant": is_pluto,
                 "model_vacant": is_model,
             },
         })
 
+    pluto_version = _fetch_pluto_version()
+    print(f"  MapPLUTO data version: {pluto_version}")
+
     out_path = _DATA / "parcels.geojson"
-    out_fc = {"type": "FeatureCollection", "features": out_features}
+    out_fc = {
+        "type": "FeatureCollection",
+        "metadata": {"pluto_version": pluto_version},
+        "features": out_features,
+    }
     out_path.write_text(json.dumps(out_fc))
     size_mb = out_path.stat().st_size / 1e6
     print(f"\nWrote {len(out_features)} parcels → {out_path} ({size_mb:.1f} MB)")

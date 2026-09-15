@@ -45,8 +45,11 @@ export async function addParcelLayer(map) {
     geojson = await resp.json();
   } catch (err) {
     console.warn('parcels.geojson unavailable — parcel layer disabled.', err);
-    return;
+    return 0;
   }
+
+  const featureCount = geojson.features ? geojson.features.length : 0;
+  const plutoVersion = geojson.metadata?.pluto_version || 'unknown';
 
   map.addSource('parcels', {
     type: 'geojson',
@@ -59,7 +62,7 @@ export async function addParcelLayer(map) {
       id: 'parcel-fill',
       type: 'fill',
       source: 'parcels',
-      minzoom: 15,
+      minzoom: 14,
       layout: { visibility: 'none' },
       paint: {
         'fill-color': categoryColor(),
@@ -71,7 +74,7 @@ export async function addParcelLayer(map) {
         ],
       },
     },
-    'cd-fill',
+    map.getLayer('cd-fill') ? 'cd-fill' : undefined,
   );
 
   map.addLayer(
@@ -79,7 +82,7 @@ export async function addParcelLayer(map) {
       id: 'parcel-line',
       type: 'line',
       source: 'parcels',
-      minzoom: 15,
+      minzoom: 14,
       layout: { visibility: 'none' },
       paint: {
         'line-color': categoryColor(),
@@ -92,7 +95,7 @@ export async function addParcelLayer(map) {
         'line-opacity': 0.8,
       },
     },
-    'cd-fill',
+    map.getLayer('cd-fill') ? 'cd-fill' : undefined,
   );
 
   // ── Hover tooltip ─────────────────────────────────
@@ -165,4 +168,6 @@ export async function addParcelLayer(map) {
       .setHTML(`<table class="parcel-table">${tableRows}</table>`)
       .addTo(map);
   });
+
+  return { count: featureCount, version: plutoVersion };
 }
