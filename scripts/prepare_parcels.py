@@ -2,14 +2,14 @@
 """Prepare MapPLUTO parcel GeoJSON for the browser map.
 
 Downloads Bronx MapPLUTO from NYC Open Data, intersects parcel polygons with
-the prediction raster, and writes data/parcels.geojson with vacancy category
-and ownership fields for each lot that is pluto-vacant or model-vacant.
+the prediction raster at every configured threshold, and writes
+data/parcels.geojson with per-threshold pixel coverage fractions and ownership
+fields for each lot that is pluto-vacant or model-vacant at any threshold.
 
-Output: data/parcels.geojson   (~5K–9K features, ~5–15 MB)
+Output: data/parcels.geojson
 
 Usage:
     cd scripts && uv run prepare_parcels.py
-    cd scripts && uv run prepare_parcels.py --no-model   # skip raster step
 """
 
 import json
@@ -21,12 +21,10 @@ from pathlib import Path
 import click
 import numpy as np
 import rasterio
-from pyproj import Transformer
 from rasterio.features import rasterize
 from rasterio.warp import calculate_default_transform, reproject
 from rasterio.enums import Resampling
 from shapely.geometry import shape, mapping
-from shapely.ops import transform as shapely_transform
 
 from config import load_config
 
@@ -43,14 +41,16 @@ ARCGIS_PAGE_SIZE = 2000
 
 DST_CRS = "EPSG:4326"
 MAX_DIM = 4000
-DEFAULT_THRESHOLD = 0.298
-PIXEL_COVERAGE_THRESHOLD = 0.20
-
+COVERAGE_THRESHOLD = 0.20
 
 ARCGIS_SERVICE_URL = (
     "https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services"
     "/MAPPLUTO/FeatureServer/0"
 )
+
+
+def _t_str(t):
+    return f"t{round(t * 1000):04d}"
 
 
 def _fetch_pluto_version() -> str:
@@ -140,12 +140,11 @@ def _load_prediction_grid(prediction_tif: Path):
             resampling=Resampling.bilinear,
         )
 
-    is_vacant = prob > DEFAULT_THRESHOLD
-    return is_vacant, dst_transform, dst_h, dst_w
+    return prob, dst_transform, dst_h, dst_w
 
 
-def _find_model_vacant_bbls(features, is_vacant, dst_transform, dst_h, dst_w):
-    """Return set of BBLs with >= PIXEL_COVERAGE_THRESHOLD vacant pixel fraction."""
+def _compute_parcel_coverages(features, prob, dst_transform, dst_h, dst_w, thresholds):
+    """For each parcel, compute pixel coverage fraction at each threshold."""
     print(f"Rasterizing {len(features)} parcel polygons onto prediction grid…")
 
     bbl_list = []
@@ -153,17 +152,16 @@ def _find_model_vacant_bbls(features, is_vacant, dst_transform, dst_h, dst_w):
     for i, feat in enumerate(features):
         bbl = feat["properties"].get("BBL")
         geom_raw = feat.get("geometry")
+        bbl_list.append(bbl)
         if geom_raw is None:
-            bbl_list.append(bbl)
             continue
         geom = shape(geom_raw)
         if not geom.is_valid:
             geom = geom.buffer(0)
-        bbl_list.append(bbl)
-        burn_shapes.append((mapping(geom), i + 1))  # 1-indexed burn value
+        burn_shapes.append((mapping(geom), i + 1))
 
     if not burn_shapes:
-        return set()
+        return {}
 
     burn = rasterize(
         burn_shapes,
@@ -173,42 +171,45 @@ def _find_model_vacant_bbls(features, is_vacant, dst_transform, dst_h, dst_w):
         dtype="int32",
     )
 
-    # Count total pixels and vacant pixels per parcel
+    total_counts = np.bincount(burn.ravel())
     parcel_ids = np.unique(burn)
     parcel_ids = parcel_ids[parcel_ids > 0]
 
-    total_counts = np.bincount(burn.ravel())
-    vacant_counts = np.bincount(burn[is_vacant].ravel(), minlength=len(total_counts))
-
-    vacant_bbls = set()
+    bbl_to_pid = {}
     for pid in parcel_ids:
-        total = total_counts[pid]
-        if total == 0:
-            continue
-        frac = vacant_counts[pid] / total
-        if frac >= PIXEL_COVERAGE_THRESHOLD:
-            vacant_bbls.add(bbl_list[pid - 1])
+        if total_counts[pid] > 0:
+            bbl_to_pid[bbl_list[pid - 1]] = int(pid)
 
-    print(f"  {len(vacant_bbls)} parcels meet {PIXEL_COVERAGE_THRESHOLD:.0%} "
-          f"pixel coverage threshold (of {len(parcel_ids)} with any overlap).")
-    return vacant_bbls
+    coverage = {bbl: {} for bbl in bbl_to_pid}
+    for t in thresholds:
+        is_vacant = prob > t
+        vacant_counts = np.bincount(burn[is_vacant].ravel(), minlength=len(total_counts))
+        ts = _t_str(t)
+        for bbl, pid in bbl_to_pid.items():
+            frac = float(vacant_counts[pid] / total_counts[pid])
+            coverage[bbl][ts] = round(frac, 4)
 
-
-def _classify(pluto_vacant: bool, model_vacant: bool) -> str:
-    if pluto_vacant and model_vacant:
-        return "both"
-    if model_vacant:
-        return "model_only"
-    return "pluto_only"
+    n_any = sum(1 for covs in coverage.values()
+                if any(v >= COVERAGE_THRESHOLD for v in covs.values()))
+    print(f"  {n_any} parcels meet {COVERAGE_THRESHOLD:.0%} coverage at any threshold "
+          f"(of {len(parcel_ids)} with raster overlap).")
+    return coverage
 
 
 @click.command()
-@click.option("--no-model", "skip_model", is_flag=True,
-              help="Skip raster intersection; only output PLUTO-recorded vacant lots.")
 @click.option("--force-download", is_flag=True,
               help="Re-download MapPLUTO even if cache exists.")
-def main(skip_model, force_download):
+def main(force_download):
     """Produce data/parcels.geojson from MapPLUTO + prediction raster."""
+    cfg = load_config()
+
+    t_cfg = cfg["thresholds"]
+    thresholds = t_cfg["evaluation_thresholds"]
+    print(f"Using {len(thresholds)} thresholds: {thresholds[0]}–{thresholds[-1]}")
+
+    pred_tif = Path(cfg["data"]["prediction_tif"])
+    if not pred_tif.exists():
+        raise FileNotFoundError(f"prediction_tif not found: {pred_tif}")
 
     cache_path = _CACHE / "bronx_mappluto.geojson"
     if force_download and cache_path.exists():
@@ -225,33 +226,28 @@ def main(skip_model, force_download):
     }
     print(f"  {len(pluto_vacant_bbls)} parcels recorded as vacant (LandUse=11).")
 
-    # Raster intersection
-    if not skip_model:
-        try:
-            cfg = load_config()
-            pred_tif = Path(cfg["data"]["prediction_tif"])
-            if not pred_tif.exists():
-                raise FileNotFoundError(pred_tif)
-            is_vacant, dst_transform, dst_h, dst_w = _load_prediction_grid(pred_tif)
-            model_vacant_bbls = _find_model_vacant_bbls(
-                features, is_vacant, dst_transform, dst_h, dst_w
-            )
-            print(f"  {len(model_vacant_bbls)} parcels overlap model-predicted vacant pixels.")
-        except Exception as exc:
-            print(f"WARNING: Raster step skipped ({exc}). "
-                  "Falling back to PLUTO-only output.", file=sys.stderr)
-            model_vacant_bbls = set()
-    else:
-        model_vacant_bbls = set()
+    prob, dst_transform, dst_h, dst_w = _load_prediction_grid(pred_tif)
+    coverage = _compute_parcel_coverages(
+        features, prob, dst_transform, dst_h, dst_w, thresholds
+    )
 
-    # Filter to parcels that are vacant by either criterion
+    # t=0.0 is degenerate (everything vacant); skip for inclusion
+    inclusion_thresholds = [_t_str(t) for t in thresholds if t > 0]
+
     out_features = []
+    counts_by_threshold = {_t_str(t): 0 for t in thresholds}
+
     for feat in features:
         props = feat["properties"]
         bbl = props.get("BBL")
         is_pluto = bbl in pluto_vacant_bbls
-        is_model = bbl in model_vacant_bbls
-        if not (is_pluto or is_model):
+        parcel_cov = coverage.get(bbl, {})
+        is_model_any = any(
+            parcel_cov.get(ts, 0) >= COVERAGE_THRESHOLD
+            for ts in inclusion_thresholds
+        )
+
+        if not (is_pluto or is_model_any):
             continue
 
         geom_raw = feat.get("geometry")
@@ -262,21 +258,29 @@ def main(skip_model, force_download):
             geom = geom.buffer(0)
         geom = geom.simplify(0.00001, preserve_topology=True)
 
+        out_props = {
+            "bbl": bbl,
+            "address": props.get("Address", ""),
+            "owner_name": props.get("OwnerName", ""),
+            "owner_type": props.get("OwnerType", ""),
+            "lot_area": props.get("LotArea"),
+            "zoning": props.get("ZoneDist1", ""),
+            "land_use": props.get("LandUse", ""),
+            "pluto_vacant": is_pluto,
+        }
+        for t in thresholds:
+            ts = _t_str(t)
+            out_props[ts] = parcel_cov.get(ts, 0)
+
+        for t in thresholds:
+            ts = _t_str(t)
+            if is_pluto or parcel_cov.get(ts, 0) >= COVERAGE_THRESHOLD:
+                counts_by_threshold[ts] += 1
+
         out_features.append({
             "type": "Feature",
             "geometry": mapping(geom),
-            "properties": {
-                "bbl": bbl,
-                "address": props.get("Address", ""),
-                "owner_name": props.get("OwnerName", ""),
-                "owner_type": props.get("OwnerType", ""),
-                "lot_area": props.get("LotArea"),
-                "zoning": props.get("ZoneDist1", ""),
-                "land_use": props.get("LandUse", ""),
-                "vacancy_category": _classify(is_pluto, is_model),
-                "pluto_vacant": is_pluto,
-                "model_vacant": is_model,
-            },
+            "properties": out_props,
         })
 
     pluto_version = _fetch_pluto_version()
@@ -285,18 +289,23 @@ def main(skip_model, force_download):
     out_path = _DATA / "parcels.geojson"
     out_fc = {
         "type": "FeatureCollection",
-        "metadata": {"pluto_version": pluto_version},
+        "metadata": {
+            "pluto_version": pluto_version,
+            "counts_by_threshold": counts_by_threshold,
+            "coverage_threshold": COVERAGE_THRESHOLD,
+        },
         "features": out_features,
     }
     out_path.write_text(json.dumps(out_fc))
     size_mb = out_path.stat().st_size / 1e6
     print(f"\nWrote {len(out_features)} parcels → {out_path} ({size_mb:.1f} MB)")
-    cats = {}
-    for f in out_features:
-        c = f["properties"]["vacancy_category"]
-        cats[c] = cats.get(c, 0) + 1
-    for cat, n in sorted(cats.items()):
-        print(f"  {cat}: {n}")
+
+    default_ts = _t_str(t_cfg["default"])
+    print(f"\nCounts by threshold (≥{COVERAGE_THRESHOLD:.0%} coverage or PLUTO-vacant):")
+    for t in thresholds:
+        ts = _t_str(t)
+        marker = " ← default" if ts == default_ts else ""
+        print(f"  {ts}: {counts_by_threshold[ts]:,}{marker}")
 
 
 if __name__ == "__main__":

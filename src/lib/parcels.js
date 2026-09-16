@@ -1,21 +1,34 @@
 import * as maplibregl from 'maplibre-gl';
 import { PARCELS_GEOJSON_URL } from './layers.js';
 
-const CATEGORY_COLORS = {
-  both:       '#ef4444',  // red   — model + PLUTO agree
-  model_only: '#f97316',  // orange — model predicts, PLUTO doesn't record
-  pluto_only: '#3b82f6',  // blue  — PLUTO records, model missed
+const DEFAULT_COVERAGE = 0.20;
+
+const COLORS = {
+  both:       '#ef4444',
+  model_only: '#f97316',
+  pluto_only: '#3b82f6',
 };
 
-const DEFAULT_COLOR = '#888888';
+let _currentTStr = 't0298';
+let _metadata = null;
+let _coverageThreshold = DEFAULT_COVERAGE;
 
-function categoryColor(category) {
+function filterExpr(tStr) {
   return [
-    'match', ['get', 'vacancy_category'],
-    'both',       CATEGORY_COLORS.both,
-    'model_only', CATEGORY_COLORS.model_only,
-    'pluto_only', CATEGORY_COLORS.pluto_only,
-    DEFAULT_COLOR,
+    'any',
+    ['==', ['get', 'pluto_vacant'], true],
+    ['>=', ['get', tStr], _coverageThreshold],
+  ];
+}
+
+function colorExpr(tStr) {
+  const isModel = ['>=', ['get', tStr], _coverageThreshold];
+  const isPluto = ['==', ['get', 'pluto_vacant'], true];
+  return [
+    'case',
+    ['all', isPluto, isModel], COLORS.both,
+    isModel, COLORS.model_only,
+    COLORS.pluto_only,
   ];
 }
 
@@ -30,14 +43,15 @@ function ownerTypeLabel(code) {
   return map[code] || code || 'Unknown';
 }
 
-function categoryLabel(cat) {
-  if (cat === 'both')       return 'Predicted vacant + PLUTO recorded';
-  if (cat === 'model_only') return 'Model predicted only';
-  if (cat === 'pluto_only') return 'PLUTO recorded only';
-  return cat;
+function categoryLabel(isPluto, isModel) {
+  if (isPluto && isModel) return 'Predicted vacant + PLUTO recorded';
+  if (isModel) return 'Model predicted only';
+  return 'PLUTO recorded only';
 }
 
-export async function addParcelLayer(map) {
+export async function addParcelLayer(map, initialTStr) {
+  _currentTStr = initialTStr || 't0298';
+
   let geojson;
   try {
     const resp = await fetch(PARCELS_GEOJSON_URL);
@@ -45,11 +59,13 @@ export async function addParcelLayer(map) {
     geojson = await resp.json();
   } catch (err) {
     console.warn('parcels.geojson unavailable — parcel layer disabled.', err);
-    return 0;
+    return null;
   }
 
-  const featureCount = geojson.features ? geojson.features.length : 0;
-  const plutoVersion = geojson.metadata?.pluto_version || 'unknown';
+  _metadata = geojson.metadata || {};
+  _coverageThreshold = _metadata.coverage_threshold || DEFAULT_COVERAGE;
+  const plutoVersion = _metadata.pluto_version || 'unknown';
+  const counts = _metadata.counts_by_threshold || {};
 
   map.addSource('parcels', {
     type: 'geojson',
@@ -64,8 +80,9 @@ export async function addParcelLayer(map) {
       source: 'parcels',
       minzoom: 14,
       layout: { visibility: 'none' },
+      filter: filterExpr(_currentTStr),
       paint: {
-        'fill-color': categoryColor(),
+        'fill-color': colorExpr(_currentTStr),
         'fill-opacity': [
           'case',
           ['boolean', ['feature-state', 'hover'], false],
@@ -84,8 +101,9 @@ export async function addParcelLayer(map) {
       source: 'parcels',
       minzoom: 14,
       layout: { visibility: 'none' },
+      filter: filterExpr(_currentTStr),
       paint: {
-        'line-color': categoryColor(),
+        'line-color': colorExpr(_currentTStr),
         'line-width': [
           'case',
           ['boolean', ['feature-state', 'hover'], false],
@@ -121,7 +139,10 @@ export async function addParcelLayer(map) {
     map.setFeatureState({ source: 'parcels', id: bbl }, { hover: true });
 
     const addr = feat.properties.address || 'No address';
-    const cat  = categoryLabel(feat.properties.vacancy_category);
+    const cov = feat.properties[_currentTStr] || 0;
+    const isModel = cov >= _coverageThreshold;
+    const isPluto = feat.properties.pluto_vacant === true;
+    const cat = categoryLabel(isPluto, isModel);
     tooltip.setLngLat(e.lngLat)
       .setHTML(`<strong>${addr}</strong><br><span class="parcel-cat">${cat}</span>`)
       .addTo(map);
@@ -149,6 +170,9 @@ export async function addParcelLayer(map) {
     tooltip.remove();
 
     const p = e.features[0].properties;
+    const cov = p[_currentTStr] || 0;
+    const isModel = cov >= _coverageThreshold;
+    const isPluto = p.pluto_vacant === true;
     const rows = [
       ['Address',      p.address || '—'],
       ['BBL',          p.bbl || '—'],
@@ -157,7 +181,8 @@ export async function addParcelLayer(map) {
       ['Lot area',     p.lot_area ? `${Number(p.lot_area).toLocaleString()} sq ft` : '—'],
       ['Zoning',       p.zoning || '—'],
       ['Land use',     p.land_use || '—'],
-      ['Vacancy',      categoryLabel(p.vacancy_category)],
+      ['Coverage',     cov > 0 ? `${(cov * 100).toFixed(1)}%` : '—'],
+      ['Vacancy',      categoryLabel(isPluto, isModel)],
     ];
 
     const tableRows = rows
@@ -169,5 +194,21 @@ export async function addParcelLayer(map) {
       .addTo(map);
   });
 
-  return { count: featureCount, version: plutoVersion };
+  return {
+    count: counts[_currentTStr] || geojson.features.length,
+    version: plutoVersion,
+    counts,
+  };
+}
+
+export function updateParcelThreshold(map, tStr) {
+  _currentTStr = tStr;
+  if (!map.getLayer('parcel-fill')) return null;
+
+  map.setFilter('parcel-fill', filterExpr(tStr));
+  map.setFilter('parcel-line', filterExpr(tStr));
+  map.setPaintProperty('parcel-fill', 'fill-color', colorExpr(tStr));
+  map.setPaintProperty('parcel-line', 'line-color', colorExpr(tStr));
+
+  return _metadata?.counts_by_threshold?.[tStr] || 0;
 }

@@ -283,9 +283,7 @@
 
 .tooltip-chip .tooltip-text {
   display: none;
-  position: absolute;
-  left: 0;
-  top: calc(100% + 6px);
+  position: fixed;
   width: 200px;
   padding: 8px 10px;
   background: rgba(20, 20, 20, 0.95);
@@ -296,13 +294,9 @@
   line-height: 1.5;
   color: rgba(255, 255, 255, 0.85);
   white-space: normal;
-  z-index: 100;
+  z-index: 9999;
   pointer-events: none;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-}
-
-.tooltip-chip:hover .tooltip-text {
-  display: block;
 }
 
 /* ── Parcel popup ───────────────────────────────────── */

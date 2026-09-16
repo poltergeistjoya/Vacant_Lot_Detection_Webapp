@@ -7,7 +7,7 @@ import {
   BRONX_CD_NAMES,
 } from './lib/layers.js';
 import { addDistrictLayer } from './lib/districts.js';
-import { addParcelLayer } from './lib/parcels.js';
+import { addParcelLayer, updateParcelThreshold } from './lib/parcels.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
 
@@ -141,6 +141,10 @@ function updateTileSource() {
     attribution: ESRI_ATTRIBUTION,
   });
 
+  const beforeLayer = map.getLayer('parcel-fill') ? 'parcel-fill'
+                    : map.getLayer('cd-fill') ? 'cd-fill'
+                    : undefined;
+
   map.addLayer(
     {
       id: 'product',
@@ -148,7 +152,7 @@ function updateTileSource() {
       source: 'product',
       layout: { visibility: wasVisible ? 'visible' : 'none' },
     },
-    map.getLayer('cd-fill') ? 'cd-fill' : undefined,
+    beforeLayer,
   );
 }
 
@@ -186,6 +190,15 @@ function buildLayerPanel() {
     tipText.className = 'tooltip-text';
     tipText.textContent = l.tooltip;
     tip.append(tipText);
+    tip.addEventListener('mouseenter', () => {
+      const r = tip.getBoundingClientRect();
+      const sidebar = document.querySelector('.sidebar');
+      const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
+      tipText.style.top = `${r.top}px`;
+      tipText.style.left = `${sidebarRight + 8}px`;
+      tipText.style.display = 'block';
+    });
+    tip.addEventListener('mouseleave', () => { tipText.style.display = 'none'; });
 
     row.append(cb, label, tip);
     panel.append(row);
@@ -209,9 +222,47 @@ function buildLayerPanel() {
       countTipText.className = 'tooltip-text';
       countTipText.textContent = 'Vacant lots found by model or recorded in MapPLUTO';
       countTip.append(countTipText);
+      countTip.addEventListener('mouseenter', () => {
+        const r = countTip.getBoundingClientRect();
+        const sidebar = document.querySelector('.sidebar');
+        const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
+        countTipText.style.top = `${r.top}px`;
+        countTipText.style.left = `${sidebarRight + 8}px`;
+        countTipText.style.display = 'block';
+      });
+      countTip.addEventListener('mouseleave', () => { countTipText.style.display = 'none'; });
 
       countRow.append(countLabel, countValue, countTip);
       panel.append(countRow);
+
+      const legend = document.createElement('div');
+      legend.id = 'parcel-legend';
+      legend.className = 'legend';
+      legend.hidden = true;
+      legend.style.paddingLeft = '24px';
+
+      const items = [
+        { color: '#ef4444', label: 'Model + PLUTO agree' },
+        { color: '#f97316', label: 'Model predicted only' },
+        { color: '#3b82f6', label: 'PLUTO recorded only' },
+      ];
+      items.forEach(({ color, label }) => {
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'legend-swatch';
+        swatch.style.background = color;
+
+        const text = document.createElement('span');
+        text.className = 'legend-label';
+        text.textContent = label;
+
+        item.append(swatch, text);
+        legend.append(item);
+      });
+
+      panel.append(legend);
     }
   });
 }
@@ -232,6 +283,8 @@ function toggleLayer(id, visible) {
     if (map.getLayer('parcel-line')) map.setLayoutProperty('parcel-line', 'visibility', vis);
     const countRow = document.getElementById('parcel-count-row');
     if (countRow) countRow.hidden = !visible;
+    const legend = document.getElementById('parcel-legend');
+    if (legend) legend.hidden = !visible;
     updateFooter();
   }
 }
@@ -240,6 +293,12 @@ function toggleLayer(id, visible) {
 function onThresholdChange(cp) {
   currentTStr = cp.tStr;
   updateTileSource();
+  const count = updateParcelThreshold(map, cp.tStr);
+  if (count !== null) {
+    parcelCount = count;
+    const val = document.getElementById('parcel-count-value');
+    if (val) val.textContent = parcelCount.toLocaleString();
+  }
 }
 
 // ── Imagery metadata ───────────────────────────────
@@ -256,7 +315,7 @@ function onMapMove() {
 // ── Init ────────────────────────────────────────────
 map.on('load', () => {
   addCDLayer();
-  addParcelLayer(map).then(info => {
+  addParcelLayer(map, currentTStr).then(info => {
     if (info) {
       parcelCount = info.count;
       plutoVersion = info.version;
