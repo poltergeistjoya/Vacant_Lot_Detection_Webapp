@@ -13,7 +13,6 @@ Usage:
 """
 
 import json
-import sys
 import urllib.request
 import urllib.parse
 from pathlib import Path
@@ -27,6 +26,9 @@ from rasterio.enums import Resampling
 from shapely.geometry import shape, mapping
 
 from config import load_config
+from logger import get_logger
+
+log = get_logger()
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DATA = _REPO_ROOT / "data"
@@ -71,11 +73,11 @@ def _fetch_pluto_version() -> str:
 
 def _fetch_pluto(cache_path: Path) -> dict:
     if cache_path.exists():
-        print(f"Using cached MapPLUTO: {cache_path}")
+        log.info("Using cached MapPLUTO: %s", cache_path)
         with cache_path.open() as f:
             return json.load(f)
 
-    print("Downloading Bronx MapPLUTO from ArcGIS FeatureServer…")
+    log.info("Downloading Bronx MapPLUTO from ArcGIS FeatureServer…")
     all_features = []
     offset = 0
     while True:
@@ -91,14 +93,13 @@ def _fetch_pluto(cache_path: Path) -> dict:
             with urllib.request.urlopen(url, timeout=120) as resp:
                 data = json.loads(resp.read())
         except Exception as exc:
-            print(f"WARNING: MapPLUTO download failed at offset {offset} ({exc}).\n"
-                  "Parcel layer will be unavailable. Check network and retry.",
-                  file=sys.stderr)
-            sys.exit(1)
+            raise click.ClickException(
+                f"MapPLUTO download failed at offset {offset}: {exc}"
+            ) from exc
 
         feats = data.get("features", [])
         all_features.extend(feats)
-        print(f"  fetched {len(feats)} features (total: {len(all_features)})")
+        log.info("  fetched %d features (total: %d)", len(feats), len(all_features))
         exceeded = data.get("properties", {}).get("exceededTransferLimit", False)
         if not exceeded or len(feats) < ARCGIS_PAGE_SIZE:
             break
@@ -108,13 +109,13 @@ def _fetch_pluto(cache_path: Path) -> dict:
     _CACHE.mkdir(parents=True, exist_ok=True)
     with cache_path.open("w") as f:
         json.dump(fc, f)
-    print(f"Cached {len(all_features)} features → {cache_path}")
+    log.info("Cached %d features → %s", len(all_features), cache_path)
     return fc
 
 
 def _load_prediction_grid(prediction_tif: Path):
     """Reproject probability raster to EPSG:4326, downsample to MAX_DIM."""
-    print(f"Loading prediction TIF: {prediction_tif}")
+    log.info("Loading prediction TIF: %s", prediction_tif)
     with rasterio.open(prediction_tif) as src:
         full_w, full_h = calculate_default_transform(
             src.crs, DST_CRS, src.width, src.height, *src.bounds
@@ -128,7 +129,7 @@ def _load_prediction_grid(prediction_tif: Path):
             dst_width=dst_w, dst_height=dst_h,
         )
 
-        print(f"Reprojecting to {DST_CRS} at {dst_w}×{dst_h}…")
+        log.info("Reprojecting to %s at %d×%d…", DST_CRS, dst_w, dst_h)
         prob = np.zeros((dst_h, dst_w), dtype=np.float32)
         reproject(
             source=rasterio.band(src, 1),
@@ -145,7 +146,7 @@ def _load_prediction_grid(prediction_tif: Path):
 
 def _compute_parcel_coverages(features, prob, dst_transform, dst_h, dst_w, thresholds):
     """For each parcel, compute pixel coverage fraction at each threshold."""
-    print(f"Rasterizing {len(features)} parcel polygons onto prediction grid…")
+    log.info("Rasterizing %d parcel polygons onto prediction grid…", len(features))
 
     bbl_list = []
     burn_shapes = []
@@ -191,8 +192,8 @@ def _compute_parcel_coverages(features, prob, dst_transform, dst_h, dst_w, thres
 
     n_any = sum(1 for covs in coverage.values()
                 if any(v >= COVERAGE_THRESHOLD for v in covs.values()))
-    print(f"  {n_any} parcels meet {COVERAGE_THRESHOLD:.0%} coverage at any threshold "
-          f"(of {len(parcel_ids)} with raster overlap).")
+    log.info("%d parcels meet %.0f%% coverage at any threshold (of %d with raster overlap).",
+             n_any, COVERAGE_THRESHOLD * 100, len(parcel_ids))
     return coverage
 
 
@@ -205,7 +206,7 @@ def main(force_download):
 
     t_cfg = cfg["thresholds"]
     thresholds = t_cfg["evaluation_thresholds"]
-    print(f"Using {len(thresholds)} thresholds: {thresholds[0]}–{thresholds[-1]}")
+    log.info("Using %d thresholds: %s–%s", len(thresholds), thresholds[0], thresholds[-1])
 
     pred_tif = Path(cfg["data"]["prediction_tif"])
     if not pred_tif.exists():
@@ -217,14 +218,14 @@ def main(force_download):
 
     pluto = _fetch_pluto(cache_path)
     features = pluto.get("features", [])
-    print(f"Loaded {len(features)} Bronx parcels from MapPLUTO.")
+    log.info("Loaded %d Bronx parcels from MapPLUTO.", len(features))
 
     pluto_vacant_bbls = {
         f["properties"].get("BBL")
         for f in features
         if f["properties"].get("LandUse") == "11"
     }
-    print(f"  {len(pluto_vacant_bbls)} parcels recorded as vacant (LandUse=11).")
+    log.info("%d parcels recorded as vacant (LandUse=11).", len(pluto_vacant_bbls))
 
     prob, dst_transform, dst_h, dst_w = _load_prediction_grid(pred_tif)
     coverage = _compute_parcel_coverages(
@@ -284,7 +285,7 @@ def main(force_download):
         })
 
     pluto_version = _fetch_pluto_version()
-    print(f"  MapPLUTO data version: {pluto_version}")
+    log.info("MapPLUTO data version: %s", pluto_version)
 
     out_path = _DATA / "parcels.geojson"
     out_fc = {
@@ -298,14 +299,14 @@ def main(force_download):
     }
     out_path.write_text(json.dumps(out_fc))
     size_mb = out_path.stat().st_size / 1e6
-    print(f"\nWrote {len(out_features)} parcels → {out_path} ({size_mb:.1f} MB)")
+    log.info("Wrote %d parcels → %s (%.1f MB)", len(out_features), out_path, size_mb)
 
     default_ts = _t_str(t_cfg["default"])
-    print(f"\nCounts by threshold (≥{COVERAGE_THRESHOLD:.0%} coverage or PLUTO-vacant):")
+    log.info("Counts by threshold (≥%.0f%% coverage or PLUTO-vacant):", COVERAGE_THRESHOLD * 100)
     for t in thresholds:
         ts = _t_str(t)
         marker = " ← default" if ts == default_ts else ""
-        print(f"  {ts}: {counts_by_threshold[ts]:,}{marker}")
+        log.info("  %s: %s%s", ts, f"{counts_by_threshold[ts]:,}", marker)
 
 
 if __name__ == "__main__":

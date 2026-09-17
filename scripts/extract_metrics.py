@@ -7,6 +7,9 @@ from pathlib import Path
 import numpy as np
 
 from config import load_config
+from logger import get_logger
+
+log = get_logger()
 
 _cfg = load_config()
 
@@ -54,7 +57,7 @@ def main():
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(json.dumps(result, indent=2) + "\n")
-    print(f"Wrote {OUT_PATH} ({len(entries)} checkpoints)")
+    log.info("Wrote %s (%d checkpoints)", OUT_PATH, len(entries))
 
 
 if __name__ == "__main__":
