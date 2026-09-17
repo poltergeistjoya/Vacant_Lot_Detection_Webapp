@@ -17,6 +17,7 @@ import numpy as np
 from color_operations import sigmoidal, gamma, saturation
 from fastapi import Body, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from PIL import Image
 
 app = FastAPI(title="Vacancy Playground API")
@@ -639,4 +640,11 @@ def delete_snapshot_endpoint(name: str):
 
 
 # ── Presets ──────────────────────────────────────────
+
+# ── Static frontend (production) ─────────────────────
+# In dev, Vite serves the frontend directly. In production (Docker),
+# FastAPI serves the built dist/ so both run on the same port.
+_DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
+if _DIST_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(_DIST_DIR), html=True), name="static")
 
