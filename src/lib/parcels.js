@@ -107,8 +107,8 @@ export async function addParcelLayer(map, initialTStr) {
         'fill-opacity': [
           'case',
           ['boolean', ['feature-state', 'hover'], false],
-          0.55,
           0.30,
+          0.12,
         ],
       },
     },

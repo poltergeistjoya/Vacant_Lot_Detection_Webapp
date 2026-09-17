@@ -119,7 +119,7 @@ const map = new maplibregl.Map({
   center: BRONX_CENTER_LNG_LAT,
   zoom: DEFAULT_ZOOM,
   minZoom: MIN_ZOOM,
-  maxZoom: 18,
+  maxZoom: 19,
   maxBounds: MAX_BOUNDS,
 });
 
