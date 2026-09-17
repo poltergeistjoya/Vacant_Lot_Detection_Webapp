@@ -1,0 +1,253 @@
+import * as maplibregl from 'maplibre-gl';
+import { PARCELS_GEOJSON_URL } from './layers.js';
+
+const DEFAULT_COVERAGE = 0.20;
+
+const COLORS = {
+  both:       '#ef4444',
+  model_only: '#f97316',
+  pluto_only: '#3b82f6',
+};
+
+let _currentTStr = 't0298';
+let _metadata = null;
+let _coverageThreshold = DEFAULT_COVERAGE;
+
+function filterExpr(tStr) {
+  return [
+    'any',
+    ['==', ['get', 'pluto_vacant'], true],
+    ['>=', ['get', tStr], _coverageThreshold],
+  ];
+}
+
+function colorExpr(tStr) {
+  const isModel = ['>=', ['get', tStr], _coverageThreshold];
+  const isPluto = ['==', ['get', 'pluto_vacant'], true];
+  return [
+    'case',
+    ['all', isPluto, isModel], COLORS.both,
+    isModel, COLORS.model_only,
+    COLORS.pluto_only,
+  ];
+}
+
+const LAND_USE_LABELS = {
+  '01': 'One & Two Family Buildings',
+  '02': 'Multi-Family Walk-Up Buildings',
+  '03': 'Multi-Family Elevator Buildings',
+  '04': 'Mixed Residential & Commercial',
+  '05': 'Commercial & Office Buildings',
+  '06': 'Industrial & Manufacturing',
+  '07': 'Transportation & Utility',
+  '08': 'Public Facilities & Institutions',
+  '09': 'Open Space & Outdoor Recreation',
+  '10': 'Parking Facilities',
+  '11': 'Vacant Land',
+};
+
+function landUseLabel(code) {
+  if (!code) return '—';
+  const key = String(code).padStart(2, '0');
+  const label = LAND_USE_LABELS[key];
+  return label ? `${key} — ${label}` : code;
+}
+
+function ownerTypeLabel(code) {
+  const map = {
+    C: 'City of New York',
+    M: 'Mixed city/private',
+    O: 'Other public',
+    P: 'Private',
+    X: 'Fully tax-exempt',
+  };
+  return map[code] || code || 'Unknown';
+}
+
+function categoryLabel(isPluto, isModel) {
+  if (isPluto && isModel) return 'Predicted vacant + PLUTO recorded';
+  if (isModel) return 'Model predicted only';
+  return 'PLUTO recorded only';
+}
+
+export async function addParcelLayer(map, initialTStr) {
+  _currentTStr = initialTStr || 't0298';
+
+  let geojson;
+  try {
+    const resp = await fetch(PARCELS_GEOJSON_URL);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    geojson = await resp.json();
+  } catch (err) {
+    console.warn('parcels.geojson unavailable — parcel layer disabled.', err);
+    return null;
+  }
+
+  _metadata = geojson.metadata || {};
+  _coverageThreshold = _metadata.coverage_threshold || DEFAULT_COVERAGE;
+  const plutoVersion = _metadata.pluto_version || 'unknown';
+  const counts = _metadata.counts_by_threshold || {};
+
+  map.addSource('parcels', {
+    type: 'geojson',
+    data: geojson,
+    promoteId: 'bbl',
+  });
+
+  map.addLayer(
+    {
+      id: 'parcel-fill',
+      type: 'fill',
+      source: 'parcels',
+      minzoom: 14,
+      layout: { visibility: 'none' },
+      filter: filterExpr(_currentTStr),
+      paint: {
+        'fill-color': colorExpr(_currentTStr),
+        'fill-opacity': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false],
+          0.30,
+          0.12,
+        ],
+      },
+    },
+    map.getLayer('cd-fill') ? 'cd-fill' : undefined,
+  );
+
+  map.addLayer(
+    {
+      id: 'parcel-line',
+      type: 'line',
+      source: 'parcels',
+      minzoom: 14,
+      layout: { visibility: 'none' },
+      filter: filterExpr(_currentTStr),
+      paint: {
+        'line-color': colorExpr(_currentTStr),
+        'line-width': [
+          'case',
+          ['boolean', ['feature-state', 'hover'], false],
+          2,
+          0.8,
+        ],
+        'line-opacity': 0.8,
+      },
+    },
+    map.getLayer('cd-fill') ? 'cd-fill' : undefined,
+  );
+
+  // ── Hover tooltip ─────────────────────────────────
+  let hoveredBbl = null;
+  const tooltip = new maplibregl.Popup({
+    closeButton: false,
+    closeOnClick: false,
+    offset: 10,
+    className: 'parcel-tooltip',
+  });
+
+  map.on('mousemove', 'parcel-fill', (e) => {
+    if (!e.features.length) return;
+    map.getCanvas().style.cursor = 'pointer';
+
+    const feat = e.features[0];
+    const bbl = feat.properties.bbl;
+
+    if (hoveredBbl !== null && hoveredBbl !== bbl) {
+      map.setFeatureState({ source: 'parcels', id: hoveredBbl }, { hover: false });
+    }
+    hoveredBbl = bbl;
+    map.setFeatureState({ source: 'parcels', id: bbl }, { hover: true });
+
+    const addr = feat.properties.address || 'No address';
+    const cov = feat.properties[_currentTStr] || 0;
+    const isModel = cov >= _coverageThreshold;
+    const isPluto = feat.properties.pluto_vacant === true;
+    const cat = categoryLabel(isPluto, isModel);
+    tooltip.setLngLat(e.lngLat)
+      .setHTML(`<strong>${addr}</strong><br><span class="parcel-cat">${cat}</span>`)
+      .addTo(map);
+  });
+
+  map.on('mouseleave', 'parcel-fill', () => {
+    map.getCanvas().style.cursor = '';
+    if (hoveredBbl !== null) {
+      map.setFeatureState({ source: 'parcels', id: hoveredBbl }, { hover: false });
+      hoveredBbl = null;
+    }
+    tooltip.remove();
+  });
+
+  // ── Click → ownership popup ───────────────────────
+  const clickPopup = new maplibregl.Popup({
+    closeButton: true,
+    closeOnClick: true,
+    className: 'parcel-popup',
+    maxWidth: '280px',
+  });
+
+  map.on('click', 'parcel-fill', (e) => {
+    if (!e.features.length) return;
+    tooltip.remove();
+
+    const feat = e.features[0];
+    const geom = feat.geometry;
+    if (geom) {
+      const coords = [];
+      if (geom.type === 'Polygon') {
+        geom.coordinates[0].forEach(c => coords.push(c));
+      } else if (geom.type === 'MultiPolygon') {
+        geom.coordinates.forEach(poly => poly[0].forEach(c => coords.push(c)));
+      }
+      if (coords.length > 0) {
+        const bounds = coords.reduce(
+          (b, c) => b.extend(c),
+          new maplibregl.LngLatBounds(coords[0], coords[0]),
+        );
+        map.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 400 });
+      }
+    }
+
+    const p = feat.properties;
+    const cov = p[_currentTStr] || 0;
+    const isModel = cov >= _coverageThreshold;
+    const isPluto = p.pluto_vacant === true;
+    const rows = [
+      ['Address',      p.address || '—'],
+      ['BBL',          p.bbl || '—'],
+      ['Owner',        p.owner_name || '—'],
+      ['Owner type',   ownerTypeLabel(p.owner_type)],
+      ['Lot area',     p.lot_area ? `${Number(p.lot_area).toLocaleString()} sq ft` : '—'],
+      ['Zoning',       p.zoning || '—'],
+      ['Land use',     landUseLabel(p.land_use)],
+      ['Coverage',     cov > 0 ? `${(cov * 100).toFixed(1)}%` : '—'],
+      ['Vacancy',      categoryLabel(isPluto, isModel)],
+    ];
+
+    const tableRows = rows
+      .map(([k, v]) => `<tr><td class="pk">${k}</td><td class="pv">${v}</td></tr>`)
+      .join('');
+
+    clickPopup.setLngLat(e.lngLat)
+      .setHTML(`<table class="parcel-table">${tableRows}</table>`)
+      .addTo(map);
+  });
+
+  return {
+    count: counts[_currentTStr] || geojson.features.length,
+    version: plutoVersion,
+    counts,
+  };
+}
+
+export function updateParcelThreshold(map, tStr) {
+  _currentTStr = tStr;
+  if (!map.getLayer('parcel-fill')) return null;
+
+  map.setFilter('parcel-fill', filterExpr(tStr));
+  map.setFilter('parcel-line', filterExpr(tStr));
+  map.setPaintProperty('parcel-fill', 'fill-color', colorExpr(tStr));
+  map.setPaintProperty('parcel-line', 'line-color', colorExpr(tStr));
+
+  return _metadata?.counts_by_threshold?.[tStr] || 0;
+}

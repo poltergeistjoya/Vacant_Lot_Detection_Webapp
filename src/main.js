@@ -7,6 +7,7 @@ import {
   BRONX_CD_NAMES,
 } from './lib/layers.js';
 import { addDistrictLayer } from './lib/districts.js';
+import { addParcelLayer, updateParcelThreshold } from './lib/parcels.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
 
@@ -17,9 +18,12 @@ let currentTStr = defaultCP.tStr;
 const layerState = {
   overlay: true,
   naip: false,
+  parcels: false,
 };
 
 let selectedCD = null;
+let parcelCount = 0;
+let plutoVersion = '';
 let imagerySource = 'Esri World Imagery';
 
 const MONTHS = [
@@ -62,22 +66,31 @@ async function fetchImageryInfo(lng, lat, zoom) {
 
 // ── Footer ────────────────────────────────────────
 function updateFooter() {
-  const parts = ['U-Net (ResNet-34)'];
+  const sources = [];
+
+  sources.push('U-Net (ResNet-34)');
 
   if (layerState.naip) {
-    parts.push('NAIP 2022 · 60 cm/px');
+    sources.push('NAIP 2022 · 60 cm/px');
   } else {
-    parts.push(imagerySource);
+    sources.push(imagerySource);
   }
+
+  if (layerState.parcels) {
+    const ver = plutoVersion ? ` · ${plutoVersion}` : '';
+    sources.push(`MapPLUTO${ver}`);
+  }
+
+  let text = sources.join(' | ');
 
   if (selectedCD) {
     const cdNum = selectedCD % 100;
     const name = BRONX_CD_NAMES[selectedCD] || `District ${cdNum}`;
-    parts.push(`CD ${cdNum} — ${name}`);
+    text += ` · CD ${cdNum} — ${name}`;
   }
 
   const el = document.getElementById('footer-info');
-  if (el) el.textContent = parts.join(' · ');
+  if (el) el.textContent = text;
 }
 
 // ── Map ─────────────────────────────────────────────
@@ -86,54 +99,51 @@ const map = new maplibregl.Map({
   style: {
     version: 8,
     sources: {
-      product: {
+      basemap: {
         type: 'raster',
-        tiles: [productTileUrl()],
+        tiles: [ESRI_BASEMAP_URL],
         tileSize: 256,
         attribution: ESRI_ATTRIBUTION,
       },
+      product: {
+        type: 'raster',
+        tiles: [`/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`],
+        tileSize: 256,
+      },
     },
-    layers: [{ id: 'product', type: 'raster', source: 'product' }],
+    layers: [
+      { id: 'basemap-layer', type: 'raster', source: 'basemap' },
+      { id: 'product-layer', type: 'raster', source: 'product' },
+    ],
   },
   center: BRONX_CENTER_LNG_LAT,
   zoom: DEFAULT_ZOOM,
   minZoom: MIN_ZOOM,
-  maxZoom: 18,
+  maxZoom: 19,
   maxBounds: MAX_BOUNDS,
 });
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
 // ── Tile URL logic ─────────────────────────────────
-function productTileUrl() {
-  if (!layerState.overlay) {
-    return layerState.naip
-      ? NAIP_TILE_URL
-      : ESRI_BASEMAP_URL;
-  }
-  return `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`;
+function updateTileSource() {
+  const url = layerState.naip
+    ? NAIP_TILE_URL
+    : `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`;
+  map.getSource('product')?.setTiles([url]);
 }
 
-function updateTileSource() {
-  const url = productTileUrl();
-  const wasVisible = map.getLayoutProperty('product', 'visibility') !== 'none';
-
-  map.removeLayer('product');
-  map.removeSource('product');
-
-  map.addSource('product', {
-    type: 'raster',
-    tiles: [url],
-    tileSize: 256,
-    attribution: ESRI_ATTRIBUTION,
-  });
-
-  map.addLayer({
-    id: 'product',
-    type: 'raster',
-    source: 'product',
-    layout: { visibility: wasVisible ? 'visible' : 'none' },
-  });
+function applyBasemapTreatment(bm) {
+  if (!bm || !map.getLayer('basemap-layer')) return;
+  if (bm.grayscale != null) {
+    map.setPaintProperty('basemap-layer', 'raster-saturation', -bm.grayscale);
+  }
+  if (bm.brightness != null) {
+    map.setPaintProperty('basemap-layer', 'raster-brightness-max', bm.brightness);
+  }
+  if (bm.sig_contrast != null && bm.sig_contrast !== 0) {
+    map.setPaintProperty('basemap-layer', 'raster-contrast', Math.tanh(bm.sig_contrast / 10));
+  }
 }
 
 // ── Layer panel ─────────────────────────────────────
@@ -141,6 +151,7 @@ const LAYERS = [
   { id: 'naip',    label: 'NAIP Imagery',       defaultOn: false, tooltip: TOOLTIPS.naip },
   { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true,  tooltip: TOOLTIPS.overlay },
   { id: 'cd',      label: 'Community Districts', defaultOn: true,  tooltip: TOOLTIPS.cd },
+  { id: 'parcels', label: 'Parcel Ownership',    defaultOn: false, tooltip: TOOLTIPS.parcels },
 ];
 
 function buildLayerPanel() {
@@ -165,22 +176,112 @@ function buildLayerPanel() {
     const tip = document.createElement('span');
     tip.className = 'tooltip-chip';
     tip.textContent = '?';
-    tip.title = l.tooltip;
+    const tipText = document.createElement('span');
+    tipText.className = 'tooltip-text';
+    tipText.textContent = l.tooltip;
+    tip.append(tipText);
+    tip.addEventListener('mouseenter', () => {
+      const r = tip.getBoundingClientRect();
+      const sidebar = document.querySelector('.sidebar');
+      const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
+      tipText.style.top = `${r.top}px`;
+      tipText.style.left = `${sidebarRight + 8}px`;
+      tipText.style.display = 'block';
+    });
+    tip.addEventListener('mouseleave', () => { tipText.style.display = 'none'; });
 
     row.append(cb, label, tip);
     panel.append(row);
+
+    if (l.id === 'parcels') {
+      const countRow = document.createElement('div');
+      countRow.id = 'parcel-count-row';
+      countRow.className = 'layer-stat';
+      countRow.hidden = true;
+
+      const countLabel = document.createElement('span');
+      countLabel.textContent = 'Vacant Lots Found ';
+
+      const countValue = document.createElement('strong');
+      countValue.id = 'parcel-count-value';
+
+      const countTip = document.createElement('span');
+      countTip.className = 'tooltip-chip';
+      countTip.textContent = '?';
+      const countTipText = document.createElement('span');
+      countTipText.className = 'tooltip-text';
+      countTipText.textContent = 'Vacant lots found by model or recorded in MapPLUTO';
+      countTip.append(countTipText);
+      countTip.addEventListener('mouseenter', () => {
+        const r = countTip.getBoundingClientRect();
+        const sidebar = document.querySelector('.sidebar');
+        const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
+        countTipText.style.top = `${r.top}px`;
+        countTipText.style.left = `${sidebarRight + 8}px`;
+        countTipText.style.display = 'block';
+      });
+      countTip.addEventListener('mouseleave', () => { countTipText.style.display = 'none'; });
+
+      countRow.append(countLabel, countValue, countTip);
+      panel.append(countRow);
+
+      const legend = document.createElement('div');
+      legend.id = 'parcel-legend';
+      legend.className = 'legend';
+      legend.hidden = true;
+      legend.style.paddingLeft = '24px';
+
+      const items = [
+        { color: '#ef4444', label: 'Model + PLUTO agree' },
+        { color: '#f97316', label: 'Model predicted only' },
+        { color: '#3b82f6', label: 'PLUTO recorded only' },
+      ];
+      items.forEach(({ color, label }) => {
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'legend-swatch';
+        swatch.style.background = color;
+
+        const text = document.createElement('span');
+        text.className = 'legend-label';
+        text.textContent = label;
+
+        item.append(swatch, text);
+        legend.append(item);
+      });
+
+      panel.append(legend);
+    }
   });
 }
 
 function toggleLayer(id, visible) {
-  if (id === 'overlay' || id === 'naip') {
-    layerState[id] = visible;
-    updateTileSource();
+  if (id === 'overlay') {
+    layerState.overlay = visible;
+    map.setLayoutProperty('product-layer', 'visibility', visible ? 'visible' : 'none');
+    updateFooter();
+  } else if (id === 'naip') {
+    layerState.naip = visible;
+    map.getSource('basemap')?.setTiles([visible ? NAIP_TILE_URL : ESRI_BASEMAP_URL]);
+    map.setLayoutProperty('product-layer', 'visibility',
+      (!visible && layerState.overlay) ? 'visible' : 'none');
     updateFooter();
   } else if (id === 'cd') {
     const vis = visible ? 'visible' : 'none';
     if (map.getLayer('cd-fill')) map.setLayoutProperty('cd-fill', 'visibility', vis);
     if (map.getLayer('cd-line')) map.setLayoutProperty('cd-line', 'visibility', vis);
+  } else if (id === 'parcels') {
+    layerState.parcels = visible;
+    const vis = visible ? 'visible' : 'none';
+    if (map.getLayer('parcel-fill')) map.setLayoutProperty('parcel-fill', 'visibility', vis);
+    if (map.getLayer('parcel-line')) map.setLayoutProperty('parcel-line', 'visibility', vis);
+    const countRow = document.getElementById('parcel-count-row');
+    if (countRow) countRow.hidden = !visible;
+    const legend = document.getElementById('parcel-legend');
+    if (legend) legend.hidden = !visible;
+    updateFooter();
   }
 }
 
@@ -188,6 +289,12 @@ function toggleLayer(id, visible) {
 function onThresholdChange(cp) {
   currentTStr = cp.tStr;
   updateTileSource();
+  const count = updateParcelThreshold(map, cp.tStr);
+  if (count !== null) {
+    parcelCount = count;
+    const val = document.getElementById('parcel-count-value');
+    if (val) val.textContent = parcelCount.toLocaleString();
+  }
 }
 
 // ── Imagery metadata ───────────────────────────────
@@ -204,6 +311,14 @@ function onMapMove() {
 // ── Init ────────────────────────────────────────────
 map.on('load', () => {
   addCDLayer();
+  addParcelLayer(map, currentTStr).then(info => {
+    if (info) {
+      parcelCount = info.count;
+      plutoVersion = info.version;
+      const val = document.getElementById('parcel-count-value');
+      if (val) val.textContent = parcelCount.toLocaleString();
+    }
+  });
   buildLayerPanel();
   loadThresholds();
   onMapMove();
@@ -217,6 +332,7 @@ async function addCDLayer() {
     const resp = await fetch('product_treatment.json');
     const treatment = await resp.json();
     cdStyle = treatment.cd;
+    applyBasemapTreatment(treatment.basemap);
   } catch { /* use defaults */ }
 
   await addDistrictLayer(map, {

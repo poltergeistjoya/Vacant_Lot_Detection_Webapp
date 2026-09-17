@@ -250,6 +250,15 @@
   flex: 1;
 }
 
+.layer-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 0 4px 24px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .tooltip-chip {
   display: inline-flex;
   align-items: center;
@@ -274,27 +283,74 @@
 
 .tooltip-chip .tooltip-text {
   display: none;
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  transform: translateY(-50%);
-  width: 220px;
+  position: fixed;
+  width: 200px;
   padding: 8px 10px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
+  background: rgba(20, 20, 20, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: var(--radius);
   font-size: 11px;
   font-weight: 400;
   line-height: 1.5;
-  color: var(--text-muted);
+  color: rgba(255, 255, 255, 0.85);
   white-space: normal;
-  z-index: 100;
+  z-index: 9999;
   pointer-events: none;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
 }
 
-.tooltip-chip:hover .tooltip-text {
-  display: block;
+/* ── Parcel popup ───────────────────────────────────── */
+.maplibregl-popup.parcel-tooltip .maplibregl-popup-content {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.maplibregl-popup.parcel-tooltip .maplibregl-popup-tip {
+  display: none;
+}
+
+.parcel-cat {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.maplibregl-popup.parcel-popup .maplibregl-popup-content {
+  padding: 10px 12px;
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+.parcel-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.parcel-table td {
+  padding: 3px 0;
+  vertical-align: top;
+}
+
+.parcel-table .pk {
+  color: var(--text-muted);
+  font-size: 11px;
+  padding-right: 10px;
+  white-space: nowrap;
+}
+
+.parcel-table .pv {
+  color: var(--text);
+  font-size: 12px;
+  word-break: break-word;
 }
 
 /* ── Legend ─────────────────────────────────────────── */

@@ -17,7 +17,6 @@ The server derives non-vacant at load time as boundary & ~vacant.
 """
 
 import json
-import sys
 from pathlib import Path
 
 import click
@@ -32,6 +31,9 @@ from shapely.geometry import shape
 from shapely.ops import transform as shapely_transform, unary_union
 
 from config import load_config
+from logger import get_logger
+
+log = get_logger()
 
 _cfg = load_config()
 
@@ -63,7 +65,7 @@ def load_land_boundary():
         boundary_geom = shape(json.load(f)["features"][0]["geometry"])
 
     if not BRONX_AREAWATER_GEOJSON.exists():
-        print("No areawater file found, using raw county boundary (includes water).")
+        log.info("No areawater file found, using raw county boundary (includes water).")
         return boundary_geom
 
     with BRONX_AREAWATER_GEOJSON.open() as f:
@@ -73,7 +75,7 @@ def load_land_boundary():
 
     land = boundary_geom.difference(water_union)
     pct = (boundary_geom.area - land.area) / boundary_geom.area * 100
-    print(f"Subtracted water from boundary ({pct:.1f}% of county area).")
+    log.info("Subtracted water from boundary (%.1f%% of county area).", pct)
     return land
 
 
@@ -81,7 +83,7 @@ def rasterize_geojson(path, src_crs, dst_shape, dst_transform, dst_bounds_3857,
                        buffer_m=0, label="features"):
     """Rasterize a GeoJSON file onto the destination grid as a boolean mask."""
     if not path.exists():
-        print(f"No {label} file at {path}, skipping.")
+        log.info("No %s file at %s, skipping.", label, path)
         return np.zeros(dst_shape, dtype=bool)
 
     with path.open() as f:
@@ -98,7 +100,7 @@ def rasterize_geojson(path, src_crs, dst_shape, dst_transform, dst_bounds_3857,
             continue
         shapes.append(proj_geom.buffer(buffer_m) if buffer_m else proj_geom)
 
-    print(f"Rasterizing {len(shapes)} {label} intersecting the mask extent...")
+    log.info("Rasterizing %d %s intersecting the mask extent...", len(shapes), label)
     if not shapes:
         return np.zeros(dst_shape, dtype=bool)
 
@@ -139,7 +141,7 @@ def main(all_thresholds, threshold):
 
     # --- Reproject probability raster once ---
     with rasterio.open(PREDICTION_TIF) as src:
-        print(f"Source: {src.width}x{src.height}, crs={src.crs}, dtype={src.dtypes[0]}")
+        log.info("Source: %dx%d, crs=%s, dtype=%s", src.width, src.height, src.crs, src.dtypes[0])
 
         full_w, full_h = calculate_default_transform(
             src.crs, DST_CRS, src.width, src.height, *src.bounds
@@ -152,7 +154,7 @@ def main(all_thresholds, threshold):
             dst_width=dst_w, dst_height=dst_h,
         )
 
-        print(f"Reprojecting to {DST_CRS} at {dst_w}x{dst_h}...")
+        log.info("Reprojecting to %s at %dx%d...", DST_CRS, dst_w, dst_h)
         prob = np.zeros((dst_h, dst_w), dtype=np.float32)
         reproject(
             source=rasterio.band(src, 1),
@@ -185,13 +187,13 @@ def main(all_thresholds, threshold):
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
     save_mask_png(boundary_mask, OUT_DIR / "boundary.png")
-    print(f"Wrote {OUT_DIR / 'boundary.png'} ({int(boundary_mask.sum())} land pixels)")
+    log.info("Wrote %s (%d land pixels)", OUT_DIR / "boundary.png", int(boundary_mask.sum()))
 
     bounds_path = OUT_DIR / "bounds.json"
     bounds_path.write_text(json.dumps({
         "west": west, "south": south, "east": east, "north": north,
     }, indent=2) + "\n")
-    print(f"Wrote {bounds_path}")
+    log.info("Wrote %s", bounds_path)
 
     # --- Per-threshold vacant masks ---
     for t in thresholds:
@@ -199,9 +201,9 @@ def main(all_thresholds, threshold):
         vacant = (prob > t) & boundary_mask & ~road_mask
         out_path = OUT_DIR / ts / "vacant.png"
         save_mask_png(vacant, out_path)
-        print(f"  {ts}: {int(vacant.sum())} vacant pixels → {out_path}")
+        log.info("  %s: %d vacant pixels -> %s", ts, int(vacant.sum()), out_path)
 
-    print(f"\nDone — {len(thresholds)} threshold(s) written to {OUT_DIR}")
+    log.info("Done — %d threshold(s) written to %s", len(thresholds), OUT_DIR)
 
 
 if __name__ == "__main__":
