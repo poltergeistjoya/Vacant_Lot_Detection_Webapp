@@ -102,6 +102,11 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
   // ── Click → zoom ──
   map.on('click', 'cd-fill', (e) => {
     if (e.features.length === 0) return;
+    // Don't zoom to district when clicking a parcel
+    if (map.getLayer('parcel-fill')) {
+      const parcelFeats = map.queryRenderedFeatures(e.point, { layers: ['parcel-fill'] });
+      if (parcelFeats.length > 0) return;
+    }
     popup.remove();
     const id = e.features[0].properties.BoroCD;
 

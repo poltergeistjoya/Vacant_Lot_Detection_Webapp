@@ -32,6 +32,27 @@ function colorExpr(tStr) {
   ];
 }
 
+const LAND_USE_LABELS = {
+  '01': 'One & Two Family Buildings',
+  '02': 'Multi-Family Walk-Up Buildings',
+  '03': 'Multi-Family Elevator Buildings',
+  '04': 'Mixed Residential & Commercial',
+  '05': 'Commercial & Office Buildings',
+  '06': 'Industrial & Manufacturing',
+  '07': 'Transportation & Utility',
+  '08': 'Public Facilities & Institutions',
+  '09': 'Open Space & Outdoor Recreation',
+  '10': 'Parking Facilities',
+  '11': 'Vacant Land',
+};
+
+function landUseLabel(code) {
+  if (!code) return '—';
+  const key = String(code).padStart(2, '0');
+  const label = LAND_USE_LABELS[key];
+  return label ? `${key} — ${label}` : code;
+}
+
 function ownerTypeLabel(code) {
   const map = {
     C: 'City of New York',
@@ -169,7 +190,25 @@ export async function addParcelLayer(map, initialTStr) {
     if (!e.features.length) return;
     tooltip.remove();
 
-    const p = e.features[0].properties;
+    const feat = e.features[0];
+    const geom = feat.geometry;
+    if (geom) {
+      const coords = [];
+      if (geom.type === 'Polygon') {
+        geom.coordinates[0].forEach(c => coords.push(c));
+      } else if (geom.type === 'MultiPolygon') {
+        geom.coordinates.forEach(poly => poly[0].forEach(c => coords.push(c)));
+      }
+      if (coords.length > 0) {
+        const bounds = coords.reduce(
+          (b, c) => b.extend(c),
+          new maplibregl.LngLatBounds(coords[0], coords[0]),
+        );
+        map.fitBounds(bounds, { padding: 60, maxZoom: 18, duration: 400 });
+      }
+    }
+
+    const p = feat.properties;
     const cov = p[_currentTStr] || 0;
     const isModel = cov >= _coverageThreshold;
     const isPluto = p.pluto_vacant === true;
@@ -180,7 +219,7 @@ export async function addParcelLayer(map, initialTStr) {
       ['Owner type',   ownerTypeLabel(p.owner_type)],
       ['Lot area',     p.lot_area ? `${Number(p.lot_area).toLocaleString()} sq ft` : '—'],
       ['Zoning',       p.zoning || '—'],
-      ['Land use',     p.land_use || '—'],
+      ['Land use',     landUseLabel(p.land_use)],
       ['Coverage',     cov > 0 ? `${(cov * 100).toFixed(1)}%` : '—'],
       ['Vacancy',      categoryLabel(isPluto, isModel)],
     ];

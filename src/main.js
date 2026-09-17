@@ -99,14 +99,22 @@ const map = new maplibregl.Map({
   style: {
     version: 8,
     sources: {
-      product: {
+      basemap: {
         type: 'raster',
-        tiles: [productTileUrl()],
+        tiles: [ESRI_BASEMAP_URL],
         tileSize: 256,
         attribution: ESRI_ATTRIBUTION,
       },
+      product: {
+        type: 'raster',
+        tiles: [`/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`],
+        tileSize: 256,
+      },
     },
-    layers: [{ id: 'product', type: 'raster', source: 'product' }],
+    layers: [
+      { id: 'basemap-layer', type: 'raster', source: 'basemap' },
+      { id: 'product-layer', type: 'raster', source: 'product' },
+    ],
   },
   center: BRONX_CENTER_LNG_LAT,
   zoom: DEFAULT_ZOOM,
@@ -118,42 +126,24 @@ const map = new maplibregl.Map({
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
 // ── Tile URL logic ─────────────────────────────────
-function productTileUrl() {
-  if (!layerState.overlay) {
-    return layerState.naip
-      ? NAIP_TILE_URL
-      : ESRI_BASEMAP_URL;
-  }
-  return `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`;
+function updateTileSource() {
+  const url = layerState.naip
+    ? NAIP_TILE_URL
+    : `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`;
+  map.getSource('product')?.setTiles([url]);
 }
 
-function updateTileSource() {
-  const url = productTileUrl();
-  const wasVisible = map.getLayoutProperty('product', 'visibility') !== 'none';
-
-  map.removeLayer('product');
-  map.removeSource('product');
-
-  map.addSource('product', {
-    type: 'raster',
-    tiles: [url],
-    tileSize: 256,
-    attribution: ESRI_ATTRIBUTION,
-  });
-
-  const beforeLayer = map.getLayer('parcel-fill') ? 'parcel-fill'
-                    : map.getLayer('cd-fill') ? 'cd-fill'
-                    : undefined;
-
-  map.addLayer(
-    {
-      id: 'product',
-      type: 'raster',
-      source: 'product',
-      layout: { visibility: wasVisible ? 'visible' : 'none' },
-    },
-    beforeLayer,
-  );
+function applyBasemapTreatment(bm) {
+  if (!bm || !map.getLayer('basemap-layer')) return;
+  if (bm.grayscale != null) {
+    map.setPaintProperty('basemap-layer', 'raster-saturation', -bm.grayscale);
+  }
+  if (bm.brightness != null) {
+    map.setPaintProperty('basemap-layer', 'raster-brightness-max', bm.brightness);
+  }
+  if (bm.sig_contrast != null && bm.sig_contrast !== 0) {
+    map.setPaintProperty('basemap-layer', 'raster-contrast', Math.tanh(bm.sig_contrast / 10));
+  }
 }
 
 // ── Layer panel ─────────────────────────────────────
@@ -268,9 +258,15 @@ function buildLayerPanel() {
 }
 
 function toggleLayer(id, visible) {
-  if (id === 'overlay' || id === 'naip') {
-    layerState[id] = visible;
-    updateTileSource();
+  if (id === 'overlay') {
+    layerState.overlay = visible;
+    map.setLayoutProperty('product-layer', 'visibility', visible ? 'visible' : 'none');
+    updateFooter();
+  } else if (id === 'naip') {
+    layerState.naip = visible;
+    map.getSource('basemap')?.setTiles([visible ? NAIP_TILE_URL : ESRI_BASEMAP_URL]);
+    map.setLayoutProperty('product-layer', 'visibility',
+      (!visible && layerState.overlay) ? 'visible' : 'none');
     updateFooter();
   } else if (id === 'cd') {
     const vis = visible ? 'visible' : 'none';
@@ -336,6 +332,7 @@ async function addCDLayer() {
     const resp = await fetch('product_treatment.json');
     const treatment = await resp.json();
     cdStyle = treatment.cd;
+    applyBasemapTreatment(treatment.basemap);
   } catch { /* use defaults */ }
 
   await addDistrictLayer(map, {
