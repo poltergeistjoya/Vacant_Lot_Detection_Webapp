@@ -1,0 +1,13 @@
+.git
+node_modules/
+dist/
+config.local.yaml
+data/roads.geojson
+scripts/
+**/__pycache__/
+**/*.pyc
+.env*
+tiles/
+*.tif
+*.vrt
+*.npz
