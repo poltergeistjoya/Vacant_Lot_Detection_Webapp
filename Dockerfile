@@ -22,4 +22,5 @@ COPY data/ data/
 COPY --from=frontend /app/dist/ dist/
 
 EXPOSE 8000
-CMD ["uv", "run", "uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000"]
+ENV PYTHONUNBUFFERED=1
+CMD ["uv", "run", "uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]

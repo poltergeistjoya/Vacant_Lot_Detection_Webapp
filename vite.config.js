@@ -4,6 +4,22 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function maplibreWorkerPlugin() {
+  const mlDist = path.resolve(__dirname, 'node_modules/maplibre-gl/dist');
+  return {
+    name: 'copy-maplibre-worker',
+    generateBundle() {
+      for (const file of ['maplibre-gl-worker.mjs', 'maplibre-gl-shared.mjs']) {
+        this.emitFile({
+          type: 'asset',
+          fileName: `assets/${file}`,
+          source: fs.readFileSync(path.join(mlDist, file)),
+        });
+      }
+    },
+  };
+}
+
 export default {
   root: 'src',
   publicDir: '../data',
@@ -28,7 +44,7 @@ export default {
       },
     },
   },
-  plugins: [{
+  plugins: [maplibreWorkerPlugin(), {
     name: 'serve-tiles',
     configureServer(server) {
       server.middlewares.use('/tiles', (req, res, next) => {

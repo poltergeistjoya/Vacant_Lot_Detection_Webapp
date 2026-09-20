@@ -310,6 +310,7 @@ function onMapMove() {
 
 // ── Init ────────────────────────────────────────────
 map.on('load', () => {
+  window._map = map;
   addCDLayer();
   addParcelLayer(map, currentTStr).then(info => {
     if (info) {
@@ -333,15 +334,17 @@ async function addCDLayer() {
     const treatment = await resp.json();
     cdStyle = treatment.cd;
     applyBasemapTreatment(treatment.basemap);
-  } catch { /* use defaults */ }
+  } catch (e) { console.warn('product_treatment.json load failed:', e); }
 
-  await addDistrictLayer(map, {
-    style: cdStyle,
-    onSelect(boroCD) {
-      selectedCD = boroCD;
-      updateFooter();
-    },
-  });
+  try {
+    await addDistrictLayer(map, {
+      style: cdStyle,
+      onSelect(boroCD) {
+        selectedCD = boroCD;
+        updateFooter();
+      },
+    });
+  } catch (e) { console.error('addDistrictLayer failed:', e); }
 }
 
 initSlider(document.getElementById('slider-container'), onThresholdChange);
