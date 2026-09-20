@@ -1,0 +1,17 @@
+.git
+node_modules/
+dist/
+config.local.yaml
+data/roads.geojson
+data/bronx_areawater.geojson
+data/bronx_boundary.geojson
+data/DATA_PROVENANCE.md
+data/cache/
+scripts/
+**/__pycache__/
+**/*.pyc
+.env*
+tiles/
+*.tif
+*.vrt
+*.npz

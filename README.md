@@ -27,6 +27,15 @@ npm run dev                               # Vite dev server on :5173
 
 Open http://localhost:5173 in your browser.
 
+## Docker (production)
+
+```bash
+docker build -t vacant-lot-app .
+docker run -p 8000:8000 vacant-lot-app
+```
+
+Open http://localhost:8000 — serves both the API and the built frontend.
+
 ## Generating masks
 
 `scripts/prepare_mask_overlay.py` reads the raw prediction probability TIF
