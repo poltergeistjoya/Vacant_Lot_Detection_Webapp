@@ -15,6 +15,8 @@ This is **not** in `.zshrc` — set it manually per session, or add it to your s
 ## Data pipeline scripts
 
 - `scripts/prepare_mask_overlay.py` — generates raster vacancy masks at various thresholds
+- `scripts/fetch_athletic_surfaces.py` — downloads athletic surface polygons from OpenStreetMap, outputs `data/athletic_surfaces.geojson`
+- `scripts/prepare_athletic_surfaces.py` — enriches athletic surfaces with model coverage fractions, outputs `data/athletic_surfaces_enriched.geojson`
 - `scripts/prepare_parcels.py` — downloads MapPLUTO, intersects with prediction raster, outputs `data/parcels.geojson`
 
 Both require the config above (specifically `data.prediction_tif`).

@@ -18,7 +18,12 @@ export function initSlider(container, onChange) {
       <input type="range" id="threshold-slider" min="0" max="${CHECKPOINTS.length - 1}" step="1" value="${defaultIdx}">
     </div>
     <div class="threshold-value" id="t-display">${DEFAULT_THRESHOLD.toFixed(3)}</div>
-    <div class="metrics" id="metrics"></div>
+    <div class="metrics" id="metrics">
+      <div class="metric"><span class="metric-label">Precision</span><span class="metric-value" id="mv-precision">—</span></div>
+      <div class="metric"><span class="metric-label">Recall</span><span class="metric-value" id="mv-recall">—</span></div>
+      <div class="metric"><span class="metric-label">F1</span><span class="metric-value" id="mv-f1">—</span></div>
+      <div class="metric"><span class="metric-label">F2</span><span class="metric-value" id="mv-f2">—</span></div>
+    </div>
   `;
   positionGoodZone();
   const slider = document.getElementById('threshold-slider');
@@ -47,15 +52,12 @@ export function setThresholdsData(data) {
 }
 
 function updateMetrics(idx) {
-  const el = document.getElementById('metrics');
-  if (!thresholdsData) { el.textContent = 'Loading metrics\u2026'; return; }
+  if (!thresholdsData) return;
   const cp = thresholdsData.checkpoints[idx];
   if (!cp) return;
   const m = cp.test;
-  el.innerHTML = `
-    <div class="metric"><span class="metric-label">Precision</span><span class="metric-value">${(m.precision * 100).toFixed(1)}%</span></div>
-    <div class="metric"><span class="metric-label">Recall</span><span class="metric-value">${(m.recall * 100).toFixed(1)}%</span></div>
-    <div class="metric"><span class="metric-label">F1</span><span class="metric-value">${(m.f1 * 100).toFixed(1)}%</span></div>
-    <div class="metric"><span class="metric-label">F2</span><span class="metric-value">${(m.f2 * 100).toFixed(1)}%</span></div>
-  `;
+  document.getElementById('mv-precision').textContent = `${(m.precision * 100).toFixed(1)}%`;
+  document.getElementById('mv-recall').textContent = `${(m.recall * 100).toFixed(1)}%`;
+  document.getElementById('mv-f1').textContent = `${(m.f1 * 100).toFixed(1)}%`;
+  document.getElementById('mv-f2').textContent = `${(m.f2 * 100).toFixed(1)}%`;
 }
