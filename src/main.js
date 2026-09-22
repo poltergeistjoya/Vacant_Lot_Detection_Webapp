@@ -29,6 +29,7 @@ const layerState = {
 let selectedCD = null;
 let plutoVersion = '';
 let imagerySource = 'Esri World Imagery';
+let vacancySource = 'both';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',
@@ -210,7 +211,7 @@ const map = new maplibregl.Map({
       },
       product: {
         type: 'raster',
-        tiles: [`/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`],
+        tiles: [`/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}&source=both`],
         tileSize: 256,
       },
     },
@@ -234,10 +235,7 @@ function updateTileSource() {
     map.getSource('product')?.setTiles([NAIP_TILE_URL]);
     return;
   }
-  let url = `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`;
-  if (layerState.parcels) {
-    url += '&pluto=1';
-  }
+  const url = `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}&source=${vacancySource}`;
   map.getSource('product')?.setTiles([url]);
 }
 
@@ -312,6 +310,39 @@ function buildLayerPanel() {
     row.append(cb, label, tip);
     panel.append(row);
 
+    if (l.id === 'overlay') {
+      const sourceCtrl = document.createElement('div');
+      sourceCtrl.id = 'vacancy-source-control';
+      sourceCtrl.className = 'vacancy-source-control';
+
+      const options = [
+        { value: 'both',  label: 'Model + PLUTO' },
+        { value: 'model', label: 'Model only' },
+        { value: 'pluto', label: 'PLUTO only' },
+      ];
+      options.forEach(opt => {
+        const optRow = document.createElement('label');
+        optRow.className = 'source-option';
+
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'vacancy-source';
+        radio.value = opt.value;
+        radio.checked = opt.value === vacancySource;
+        radio.addEventListener('change', () => {
+          vacancySource = opt.value;
+          updateTileSource();
+          updateSliderMute();
+        });
+
+        const text = document.createElement('span');
+        text.textContent = opt.label;
+        optRow.append(radio, text);
+        sourceCtrl.append(optRow);
+      });
+      panel.append(sourceCtrl);
+    }
+
     if (l.id === 'parcels') {
       const legend = document.createElement('div');
       legend.id = 'parcel-legend';
@@ -361,11 +392,11 @@ function setPeek(on) {
   if (on === _peeking) return;
   if (on && !layerState.parcels) return;
   _peeking = on;
-  map.setLayoutProperty('product-layer', 'visibility', on ? 'none' : 'visible');
+  const vis = on ? 'none' : 'visible';
+  if (map.getLayer('parcel-fill')) map.setLayoutProperty('parcel-fill', 'visibility', vis);
+  if (map.getLayer('parcel-line')) map.setLayoutProperty('parcel-line', 'visibility', vis);
   const btn = document.getElementById('peek-btn');
   if (btn) btn.classList.toggle('active', on);
-  const cb = document.getElementById('layer-overlay');
-  if (cb) cb.checked = !on;
 }
 
 document.addEventListener('keydown', (e) => {
@@ -378,10 +409,30 @@ document.addEventListener('keyup', (e) => {
   if (e.key === 'v' || e.key === 'V') setPeek(false);
 });
 
+function updateSliderMute() {
+  const container = document.getElementById('slider-container');
+  if (!container) return;
+  const existing = container.querySelector('.slider-note');
+  if (vacancySource === 'pluto') {
+    container.classList.add('slider-muted');
+    if (!existing) {
+      const note = document.createElement('div');
+      note.className = 'slider-note';
+      note.textContent = 'Threshold does not affect PLUTO-only overlay';
+      container.append(note);
+    }
+  } else {
+    container.classList.remove('slider-muted');
+    if (existing) existing.remove();
+  }
+}
+
 function toggleLayer(id, visible) {
   if (id === 'overlay') {
     layerState.overlay = visible;
     map.setLayoutProperty('product-layer', 'visibility', visible ? 'visible' : 'none');
+    const sourceCtrl = document.getElementById('vacancy-source-control');
+    if (sourceCtrl) sourceCtrl.hidden = !visible;
     updateFooter();
   } else if (id === 'naip') {
     layerState.naip = visible;
@@ -401,7 +452,6 @@ function toggleLayer(id, visible) {
     const legend = document.getElementById('parcel-legend');
     if (legend) legend.hidden = !visible;
     if (!visible && _peeking) setPeek(false);
-    updateTileSource();
     updateFooter();
   }
 }
@@ -442,7 +492,7 @@ function prefetchPlutoTiles() {
         const key = `${zoom}/${x}/${y}/${currentTStr}`;
         if (_prefetched.has(key)) continue;
         _prefetched.add(key);
-        fetch(`/api/tile/product/${zoom}/${x}/${y}.png?t=${currentTStr}&pluto=1`)
+        fetch(`/api/tile/product/${zoom}/${x}/${y}.png?t=${currentTStr}&source=${vacancySource}`)
           .catch(() => {});
       }
     }

@@ -217,9 +217,10 @@ def _crop_resize_mask(full_mask, src_top, src_bottom, src_left, src_right,
     return tile
 
 
-def _get_tile_masks(z, x, y, threshold_str, include_pluto=False):
+def _get_tile_masks(z, x, y, threshold_str, source="both"):
     """Return (vacant_mask, nonvacant_mask) resized to 256x256 for this tile.
 
+    source: "model" (model only), "pluto" (PLUTO only), "both" (model OR pluto).
     Returns (None, None) if the tile is fully outside the mask extent.
     """
     masks = _load_product_masks(threshold_str)
@@ -257,20 +258,32 @@ def _get_tile_masks(z, x, y, threshold_str, include_pluto=False):
     dst_h = max(1, int(round(dst_bottom - dst_top)))
     dl, dt = int(round(dst_left)), int(round(dst_top))
 
-    vacant_tile = _crop_resize_mask(
-        masks["vacant"], src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
-    nonvacant_tile = _crop_resize_mask(
-        masks["nonvacant"], src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
+    def _crop(full_mask):
+        return _crop_resize_mask(
+            full_mask, src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
 
-    if include_pluto:
-        shared = _load_shared_masks()
-        pluto_full = shared.get("pluto_vacant") if shared else None
-        if pluto_full is not None:
-            pluto_tile = _crop_resize_mask(
-                pluto_full, src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
-            vacant_tile = vacant_tile | pluto_tile
-            nonvacant_tile = nonvacant_tile & ~pluto_tile
+    model_vacant = _crop(masks["vacant"])
+    model_nonvacant = _crop(masks["nonvacant"])
 
+    if source == "model":
+        return model_vacant, model_nonvacant
+
+    shared = _load_shared_masks()
+    pluto_full = shared.get("pluto_vacant") if shared else None
+
+    if pluto_full is None:
+        if source == "pluto":
+            return np.zeros((256, 256), dtype=bool), np.zeros((256, 256), dtype=bool)
+        return model_vacant, model_nonvacant
+
+    pluto_tile = _crop(pluto_full)
+
+    if source == "pluto":
+        boundary = model_vacant | model_nonvacant
+        return pluto_tile, boundary & ~pluto_tile
+
+    vacant_tile = model_vacant | pluto_tile
+    nonvacant_tile = model_nonvacant & ~pluto_tile
     return vacant_tile, nonvacant_tile
 
 
@@ -474,7 +487,7 @@ def _aliases_to_color_params(
 async def product_tile(
     z: int, x: int, y: int,
     t: str = Query("t0298"),
-    pluto: int = Query(0),
+    source: str = Query("both"),
     mode: str = Query(None),
     # Basemap treatment (playground mode)
     bm_sc: float = Query(0), bm_sb: float = Query(0.5),
@@ -522,7 +535,8 @@ async def product_tile(
         vc_kwargs = PRODUCT_VC
         nv_kwargs = PRODUCT_NV
 
-    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, include_pluto=bool(pluto))
+    src = source if source in ("model", "pluto", "both") else "both"
+    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, source=src)
 
     if vacant_mask is None:
         result = apply_color_ops(arr, **bm_kwargs)
