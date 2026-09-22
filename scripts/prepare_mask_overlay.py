@@ -4,7 +4,7 @@
 Reads the raw prediction probability TIF, reprojects + downsamples to
 Web Mercator, computes a shared boundary mask (Bronx land minus water),
 and for each requested threshold produces a vacant mask PNG with roads
-burned out.
+and athletic surfaces burned out.
 
 Output structure:
   data/masks/
@@ -45,6 +45,10 @@ OUT_DIR = _REPO_DATA / "masks"
 ROADS_GEOJSON = _REPO_DATA / "roads.geojson"
 ROADS_SRC_CRS = "EPSG:4269"
 ROAD_BUFFER_M = 8
+
+ATHLETIC_GEOJSON = _REPO_DATA / "athletic_surfaces.geojson"
+ATHLETIC_SRC_CRS = "EPSG:4326"
+ATHLETIC_BUFFER_M = 2
 
 BRONX_BOUNDARY_GEOJSON = _REPO_DATA / "bronx_boundary.geojson"
 BRONX_BOUNDARY_SRC_CRS = "EPSG:4269"
@@ -183,6 +187,11 @@ def main(all_thresholds, threshold):
         buffer_m=ROAD_BUFFER_M, label="road buffers",
     )
 
+    athletic_mask = rasterize_geojson(
+        ATHLETIC_GEOJSON, ATHLETIC_SRC_CRS, (dst_h, dst_w), dst_transform, dst_bounds_3857,
+        buffer_m=ATHLETIC_BUFFER_M, label="athletic surfaces",
+    )
+
     # --- Write shared outputs ---
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -198,7 +207,7 @@ def main(all_thresholds, threshold):
     # --- Per-threshold vacant masks ---
     for t in thresholds:
         ts = t_str(t)
-        vacant = (prob > t) & boundary_mask & ~road_mask
+        vacant = (prob > t) & boundary_mask & ~road_mask & ~athletic_mask
         out_path = OUT_DIR / ts / "vacant.png"
         save_mask_png(vacant, out_path)
         log.info("  %s: %d vacant pixels -> %s", ts, int(vacant.sum()), out_path)

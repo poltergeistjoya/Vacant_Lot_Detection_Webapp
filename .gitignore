@@ -4,6 +4,8 @@ dist/
 tiles/
 data/playground_snapshots.json
 data/cache/
+data/athletic_surfaces.geojson
+data/athletic_surfaces_enriched.geojson
 .DS_Store
 *.pyc
 __pycache__/
