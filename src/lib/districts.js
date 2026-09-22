@@ -40,61 +40,77 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
     },
   });
 
-  function lineWidthExpr() {
-    return ['case',
-      ['boolean', ['feature-state', 'hover'], false],
-      s.hoverStrokeWidth,
-      ['interpolate', ['linear'], ['zoom'], 14, s.strokeWidth, 17, s.strokeWidth * 2.5],
-    ];
-  }
-  function lineOpacityExpr() {
-    return ['case',
-      ['boolean', ['feature-state', 'hover'], false],
-      s.hoverStrokeOpacity,
-      ['interpolate', ['linear'], ['zoom'], 14, s.strokeOpacity, 17, Math.min(s.strokeOpacity * 5, 0.85)],
-    ];
-  }
-
   map.addLayer({
     id: 'cd-line',
     type: 'line',
     source: 'districts',
     paint: {
       'line-color': s.strokeColor,
-      'line-width': lineWidthExpr(),
-      'line-opacity': lineOpacityExpr(),
+      'line-width': [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        s.hoverStrokeWidth,
+        s.strokeWidth,
+      ],
+      'line-opacity': [
+        'case',
+        ['boolean', ['feature-state', 'hover'], false],
+        s.hoverStrokeOpacity,
+        s.strokeOpacity,
+      ],
     },
   });
 
   // ── Hover ──
   let hoveredId = null;
-  let cdSelected = false;
-  let selectionZoom = null; // zoom at time of CD click; re-enable hover when back at or below this
+  let selectedId = null;    // district clicked into; only its label goes quiet
+  let selectedZoom = null;  // zoom at which that district fills the view
+  // Slack before a zoom-out counts as leaving the district, so small nudges
+  // around the fitted zoom don't flip the label on and off.
+  const ZOOM_RELEASE = 0.5;
+  let pointerInside = false;
+  let lastPoint = null;
   const popup = new maplibregl.Popup({
     closeButton: false,
     closeOnClick: false,
     offset: 12,
+    className: 'cd-tooltip',
   });
 
-  map.on('mousemove', 'cd-fill', (e) => {
-    if (e.features.length === 0 || cdSelected) return;
+  // Once you have clicked into a district you know where you are, so its name
+  // stops following the cursor. Every other district still labels itself.
+  function showLabel(id, lngLat) {
+    if (id === selectedId) {
+      popup.remove();
+      return;
+    }
+    const cdNum = id % 100;
+    const name = BRONX_CD_NAMES[id] || `District ${cdNum}`;
+    popup
+      .setLngLat(lngLat)
+      .setHTML(`<strong>CD ${cdNum}</strong><br>${name}`)
+      .addTo(map);
+  }
+
+  function setHovered(id) {
     map.getCanvas().style.cursor = 'pointer';
-
-    const feat = e.features[0];
-    const id = feat.properties.BoroCD;
-
     if (hoveredId !== null && hoveredId !== id) {
       map.setFeatureState({ source: 'districts', id: hoveredId }, { hover: false });
     }
     hoveredId = id;
     map.setFeatureState({ source: 'districts', id }, { hover: true });
+  }
 
-    const cdNum = id % 100;
-    const name = BRONX_CD_NAMES[id] || `District ${cdNum}`;
-    popup
-      .setLngLat(e.lngLat)
-      .setHTML(`<strong>CD ${cdNum}</strong><br>${name}`)
-      .addTo(map);
+  map.on('mousemove', (e) => {
+    pointerInside = true;
+    lastPoint = e.point;
+  });
+
+  map.on('mousemove', 'cd-fill', (e) => {
+    if (e.features.length === 0) return;
+    const id = e.features[0].properties.BoroCD;
+    setHovered(id);
+    showLabel(id, e.lngLat);
   });
 
   map.on('mouseleave', 'cd-fill', () => {
@@ -106,25 +122,40 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
     popup.remove();
   });
 
-  // Re-enable hover when user zooms back out to where they selected
-  map.on('zoom', () => {
-    if (cdSelected && selectionZoom !== null && map.getZoom() <= selectionZoom) {
-      cdSelected = false;
-      selectionZoom = null;
+  // A camera move under a stationary cursor fires no pointer event at all, which
+  // is how a label gets stranded mid-map. Hide it for the duration, then resolve
+  // it once the camera settles.
+  map.on('movestart', () => { popup.remove(); });
+
+  map.on('moveend', () => {
+    // Zoomed back out past the district you clicked into: it is no longer where
+    // you are, so it stops being the quiet one and labels itself again.
+    if (selectedZoom !== null && map.getZoom() < selectedZoom - ZOOM_RELEASE) {
+      selectedId = null;
+      selectedZoom = null;
     }
-    if (cdSelected) {
-      popup.remove();
-      if (hoveredId !== null) {
-        map.setFeatureState({ source: 'districts', id: hoveredId }, { hover: false });
-        hoveredId = null;
-      }
-      map.getCanvas().style.cursor = '';
-    }
+
+    if (!pointerInside || !lastPoint) return;
+    const feats = map.queryRenderedFeatures(lastPoint, { layers: ['cd-fill'] });
+    // An empty result here is usually the source mid-retile, never a reason to
+    // drop the highlight — only the pointer leaving a district does that.
+    if (feats.length === 0) return;
+    const id = feats[0].properties.BoroCD;
+    setHovered(id);
+    showLabel(id, map.unproject(lastPoint));
+  });
+
+  // A layer mouseleave is not guaranteed when the pointer exits the map itself.
+  const canvasContainer = map.getCanvasContainer();
+  canvasContainer.addEventListener('mouseenter', () => { pointerInside = true; });
+  canvasContainer.addEventListener('mouseleave', () => {
+    pointerInside = false;
+    lastPoint = null;
   });
 
   // ── Click → zoom ──
   map.on('click', 'cd-fill', (e) => {
-    if (e.features.length === 0 || cdSelected) return;
+    if (e.features.length === 0) return;
     // Don't zoom to district when clicking a parcel
     if (map.getLayer('parcel-fill')) {
       const parcelFeats = map.queryRenderedFeatures(e.point, { layers: ['parcel-fill'] });
@@ -147,8 +178,9 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
           (b, c) => b.extend(c),
           new maplibregl.LngLatBounds(coords[0], coords[0]),
         );
-        cdSelected = true;
-        selectionZoom = map.getZoom();
+        selectedId = id;
+        const cam = map.cameraForBounds(bounds, { padding: 40 });
+        selectedZoom = cam ? cam.zoom : map.getZoom();
         map.fitBounds(bounds, { padding: 40, duration: 600 });
       }
     }
@@ -169,8 +201,18 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
     ]);
 
     map.setPaintProperty('cd-line', 'line-color', s.strokeColor);
-    map.setPaintProperty('cd-line', 'line-width', lineWidthExpr());
-    map.setPaintProperty('cd-line', 'line-opacity', lineOpacityExpr());
+    map.setPaintProperty('cd-line', 'line-width', [
+      'case',
+      ['boolean', ['feature-state', 'hover'], false],
+      s.hoverStrokeWidth,
+      s.strokeWidth,
+    ]);
+    map.setPaintProperty('cd-line', 'line-opacity', [
+      'case',
+      ['boolean', ['feature-state', 'hover'], false],
+      s.hoverStrokeOpacity,
+      s.strokeOpacity,
+    ]);
   }
 
   return { updateStyle, getStyle: () => ({ ...s }) };
