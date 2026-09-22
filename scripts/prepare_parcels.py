@@ -24,6 +24,9 @@ from rasterio.features import rasterize
 from rasterio.warp import calculate_default_transform, reproject
 from rasterio.enums import Resampling
 from shapely.geometry import shape, mapping
+from shapely.ops import transform as shapely_transform
+from pyproj import Transformer
+from PIL import Image
 
 from config import load_config
 from logger import get_logger
@@ -34,11 +37,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DATA = _REPO_ROOT / "data"
 _CACHE = _DATA / "cache"
 
+# Stamped into the cache so a changed query invalidates it. Without this a new
+# entry in ARCGIS_FIELDS silently yields a column of nulls: the download is
+# skipped, the field is never fetched, and every props.get() returns None.
+_CACHE_QUERY_KEY = "_query"
+
 ARCGIS_URL = (
     "https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services"
     "/MAPPLUTO/FeatureServer/0/query"
 )
-ARCGIS_FIELDS = "BBL,Address,OwnerName,OwnerType,LotArea,ZoneDist1,LandUse"
+ARCGIS_FIELDS = "BBL,Address,OwnerName,OwnerType,LotArea,ZoneDist1,LandUse,CD"
 ARCGIS_PAGE_SIZE = 2000
 
 DST_CRS = "EPSG:4326"
@@ -49,6 +57,8 @@ ARCGIS_SERVICE_URL = (
     "https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services"
     "/MAPPLUTO/FeatureServer/0"
 )
+
+_MASKS_DIR = _DATA / "masks"
 
 
 def _t_str(t):
@@ -71,11 +81,41 @@ def _fetch_pluto_version() -> str:
     return "unknown"
 
 
+def _query_id() -> dict:
+    """What a cached download is a download *of*."""
+    return {"url": ARCGIS_URL, "fields": ARCGIS_FIELDS}
+
+
+def _cache_is_current(cached: dict) -> bool:
+    """Whether a cached FeatureCollection answers the query we are about to make."""
+    cached_q = cached.get(_CACHE_QUERY_KEY)
+    if cached_q == _query_id():
+        return True
+
+    if cached_q is None:
+        log.info("Cached MapPLUTO predates query stamping; re-downloading.")
+        return False
+
+    if cached_q.get("url") != ARCGIS_URL:
+        log.info("MapPLUTO endpoint changed since the cache was written; re-downloading.")
+        return False
+
+    cached_fields = set(filter(None, (cached_q.get("fields") or "").split(",")))
+    added = sorted(set(ARCGIS_FIELDS.split(",")) - cached_fields)
+    log.info(
+        "Cached MapPLUTO is missing requested field(s): %s; re-downloading.",
+        ", ".join(added) or "(field list reordered)",
+    )
+    return False
+
+
 def _fetch_pluto(cache_path: Path) -> dict:
     if cache_path.exists():
-        log.info("Using cached MapPLUTO: %s", cache_path)
         with cache_path.open() as f:
-            return json.load(f)
+            cached = json.load(f)
+        if _cache_is_current(cached):
+            log.info("Using cached MapPLUTO: %s", cache_path)
+            return cached
 
     log.info("Downloading Bronx MapPLUTO from ArcGIS FeatureServer…")
     all_features = []
@@ -105,7 +145,11 @@ def _fetch_pluto(cache_path: Path) -> dict:
             break
         offset += len(feats)
 
-    fc = {"type": "FeatureCollection", "features": all_features}
+    fc = {
+        "type": "FeatureCollection",
+        _CACHE_QUERY_KEY: _query_id(),
+        "features": all_features,
+    }
     _CACHE.mkdir(parents=True, exist_ok=True)
     with cache_path.open("w") as f:
         json.dump(fc, f)
@@ -197,6 +241,61 @@ def _compute_parcel_coverages(features, prob, dst_transform, dst_h, dst_w, thres
     return coverage
 
 
+def _generate_pluto_mask(features, pluto_vacant_bbls):
+    """Rasterize PLUTO-vacant parcels onto the shared mask grid."""
+    bounds_path = _MASKS_DIR / "bounds.json"
+    boundary_path = _MASKS_DIR / "boundary.png"
+
+    if not bounds_path.exists() or not boundary_path.exists():
+        log.warning("Mask grid not found at %s — run prepare_mask_overlay.py first. "
+                    "Skipping PLUTO vacancy raster.", _MASKS_DIR)
+        return
+
+    bounds_wgs84 = json.loads(bounds_path.read_text())
+    boundary_img = np.array(Image.open(boundary_path))
+    h, w = boundary_img.shape[:2]
+    boundary_mask = boundary_img[:, :, 3] > 127
+
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    ml, mb = transformer.transform(bounds_wgs84["west"], bounds_wgs84["south"])
+    mr, mt = transformer.transform(bounds_wgs84["east"], bounds_wgs84["north"])
+
+    from rasterio.transform import from_bounds as rio_from_bounds
+    dst_transform = rio_from_bounds(ml, mb, mr, mt, w, h)
+
+    shapes = []
+    for feat in features:
+        bbl = feat["properties"].get("BBL")
+        if bbl not in pluto_vacant_bbls:
+            continue
+        geom_raw = feat.get("geometry")
+        if geom_raw is None:
+            continue
+        geom = shape(geom_raw)
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+        shapes.append(shapely_transform(transformer.transform, geom))
+
+    if not shapes:
+        log.warning("No PLUTO-vacant geometries to rasterize.")
+        return
+
+    log.info("Rasterizing %d PLUTO-vacant parcels onto mask grid (%dx%d)…",
+             len(shapes), w, h)
+    mask = rasterize(
+        shapes, out_shape=(h, w), transform=dst_transform,
+        fill=0, default_value=1, dtype="uint8",
+    ).astype(bool)
+
+    mask &= boundary_mask
+
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[mask] = [255, 255, 255, 255]
+    out_path = _MASKS_DIR / "pluto_vacant.png"
+    Image.fromarray(rgba, mode="RGBA").save(out_path)
+    log.info("Wrote PLUTO vacancy raster: %s (%d pixels)", out_path, int(mask.sum()))
+
+
 @click.command()
 @click.option("--force-download", is_flag=True,
               help="Re-download MapPLUTO even if cache exists.")
@@ -226,6 +325,8 @@ def main(force_download):
         if f["properties"].get("LandUse") == "11"
     }
     log.info("%d parcels recorded as vacant (LandUse=11).", len(pluto_vacant_bbls))
+
+    _generate_pluto_mask(features, pluto_vacant_bbls)
 
     prob, dst_transform, dst_h, dst_w = _load_prediction_grid(pred_tif)
     coverage = _compute_parcel_coverages(
@@ -267,6 +368,9 @@ def main(force_download):
             "lot_area": props.get("LotArea"),
             "zoning": props.get("ZoneDist1", ""),
             "land_use": props.get("LandUse", ""),
+            # MapPLUTO's CD is the same boro-prefixed code as the district
+            # layer's BoroCD (201-212, 226-228), so it joins without a lookup.
+            "cd": props.get("CD"),
             "pluto_vacant": is_pluto,
         }
         for t in thresholds:

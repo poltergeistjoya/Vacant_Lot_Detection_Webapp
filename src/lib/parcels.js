@@ -12,6 +12,7 @@ const COLORS = {
 let _currentTStr = 't0298';
 let _metadata = null;
 let _coverageThreshold = DEFAULT_COVERAGE;
+let _geojson = null;
 
 function filterExpr(tStr) {
   return [
@@ -83,6 +84,7 @@ export async function addParcelLayer(map, initialTStr) {
     return null;
   }
 
+  _geojson = geojson;
   _metadata = geojson.metadata || {};
   _coverageThreshold = _metadata.coverage_threshold || DEFAULT_COVERAGE;
   const plutoVersion = _metadata.pluto_version || 'unknown';
@@ -238,6 +240,31 @@ export async function addParcelLayer(map, initialTStr) {
     version: plutoVersion,
     counts,
   };
+}
+
+function isVacantAt(props, tStr) {
+  return props.pluto_vacant === true || (props[tStr] || 0) >= _coverageThreshold;
+}
+
+/** Whether parcels.geojson carries the district code (added 2026-09-22). */
+export function hasDistrictField() {
+  return !!_geojson?.features?.length
+    && _geojson.features[0].properties.cd !== undefined;
+}
+
+/**
+ * Count vacant parcels at the current threshold, optionally scoped to one
+ * community district. Returns null when parcel data never loaded.
+ */
+export function countParcels({ cd = null } = {}) {
+  if (!_geojson) return null;
+  let n = 0;
+  for (const f of _geojson.features) {
+    const props = f.properties;
+    if (cd !== null && Number(props.cd) !== Number(cd)) continue;
+    if (isVacantAt(props, _currentTStr)) n++;
+  }
+  return n;
 }
 
 export function updateParcelThreshold(map, tStr) {
