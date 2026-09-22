@@ -8,22 +8,26 @@ import {
 } from './lib/layers.js';
 import { addDistrictLayer } from './lib/districts.js';
 import { addParcelLayer, updateParcelThreshold } from './lib/parcels.js';
+import { addAthleticLayer, updateAthleticThreshold } from './lib/athletic.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
 
 const defaultCP = CHECKPOINTS[getDefaultIndex()];
 let currentTStr = defaultCP.tStr;
+const DEV_MODE = new URLSearchParams(window.location.search).has('dev');
 
 // ── Layer state ────────────────────────────────────
 const layerState = {
   overlay: true,
   naip: false,
   parcels: false,
+  athletic: false,
 };
 
 let selectedCD = null;
 let parcelCount = 0;
 let plutoVersion = '';
+let osmDate = '';
 let imagerySource = 'Esri World Imagery';
 
 const MONTHS = [
@@ -79,6 +83,11 @@ function updateFooter() {
   if (layerState.parcels) {
     const ver = plutoVersion ? ` · ${plutoVersion}` : '';
     sources.push(`MapPLUTO${ver}`);
+  }
+
+  if (layerState.athletic) {
+    const date = osmDate ? ` · ${osmDate}` : '';
+    sources.push(`OSM Athletic${date}`);
   }
 
   let text = sources.join(' | ');
@@ -151,8 +160,11 @@ const LAYERS = [
   { id: 'naip',    label: 'NAIP Imagery',       defaultOn: false, tooltip: TOOLTIPS.naip },
   { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true,  tooltip: TOOLTIPS.overlay },
   { id: 'cd',      label: 'Community Districts', defaultOn: true,  tooltip: TOOLTIPS.cd },
-  { id: 'parcels', label: 'Parcel Ownership',    defaultOn: false, tooltip: TOOLTIPS.parcels },
+  { id: 'parcels',  label: 'Parcel Ownership',    defaultOn: false, tooltip: TOOLTIPS.parcels },
 ];
+if (DEV_MODE) {
+  LAYERS.push({ id: 'athletic', label: 'Athletic Surfaces', defaultOn: false, tooltip: TOOLTIPS.athletic });
+}
 
 function buildLayerPanel() {
   const panel = document.getElementById('layer-panel');
@@ -254,6 +266,50 @@ function buildLayerPanel() {
 
       panel.append(legend);
     }
+
+    if (l.id === 'athletic') {
+      const fpRow = document.createElement('div');
+      fpRow.id = 'athletic-fp-row';
+      fpRow.className = 'layer-stat';
+      fpRow.hidden = true;
+
+      const fpLabel = document.createElement('span');
+      fpLabel.textContent = 'False Positives ';
+
+      const fpValue = document.createElement('strong');
+      fpValue.id = 'athletic-fp-value';
+
+      fpRow.append(fpLabel, fpValue);
+      panel.append(fpRow);
+
+      const legend = document.createElement('div');
+      legend.id = 'athletic-legend';
+      legend.className = 'legend';
+      legend.hidden = true;
+      legend.style.paddingLeft = '24px';
+
+      const items = [
+        { color: '#e11d48', label: 'Model thinks vacant (false positive)' },
+        { color: '#10b981', label: 'Correctly classified' },
+      ];
+      items.forEach(({ color, label }) => {
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+
+        const swatch = document.createElement('span');
+        swatch.className = 'legend-swatch';
+        swatch.style.background = color;
+
+        const text = document.createElement('span');
+        text.className = 'legend-label';
+        text.textContent = label;
+
+        item.append(swatch, text);
+        legend.append(item);
+      });
+
+      panel.append(legend);
+    }
   });
 }
 
@@ -282,6 +338,16 @@ function toggleLayer(id, visible) {
     const legend = document.getElementById('parcel-legend');
     if (legend) legend.hidden = !visible;
     updateFooter();
+  } else if (id === 'athletic') {
+    layerState.athletic = visible;
+    const vis = visible ? 'visible' : 'none';
+    if (map.getLayer('athletic-fill')) map.setLayoutProperty('athletic-fill', 'visibility', vis);
+    if (map.getLayer('athletic-line')) map.setLayoutProperty('athletic-line', 'visibility', vis);
+    const fpRow = document.getElementById('athletic-fp-row');
+    if (fpRow) fpRow.hidden = !visible;
+    const legend = document.getElementById('athletic-legend');
+    if (legend) legend.hidden = !visible;
+    updateFooter();
   }
 }
 
@@ -294,6 +360,13 @@ function onThresholdChange(cp) {
     parcelCount = count;
     const val = document.getElementById('parcel-count-value');
     if (val) val.textContent = parcelCount.toLocaleString();
+  }
+  if (DEV_MODE) {
+    const fpCount = updateAthleticThreshold(map, cp.tStr);
+    if (fpCount !== null) {
+      const val = document.getElementById('athletic-fp-value');
+      if (val) val.textContent = fpCount.toLocaleString();
+    }
   }
 }
 
@@ -309,6 +382,9 @@ function onMapMove() {
 }
 
 // ── Init ────────────────────────────────────────────
+buildLayerPanel();
+loadThresholds();
+
 map.on('load', () => {
   window._map = map;
   addCDLayer();
@@ -320,10 +396,16 @@ map.on('load', () => {
       if (val) val.textContent = parcelCount.toLocaleString();
     }
   });
-  buildLayerPanel();
-  loadThresholds();
+  if (DEV_MODE) {
+    addAthleticLayer(map, currentTStr).then(info => {
+      if (info) {
+        const val = document.getElementById('athletic-fp-value');
+        if (val) val.textContent = info.count.toLocaleString();
+        if (info.queryDate) osmDate = info.queryDate;
+      }
+    });
+  }
   onMapMove();
-
   map.on('moveend', onMapMove);
 });
 

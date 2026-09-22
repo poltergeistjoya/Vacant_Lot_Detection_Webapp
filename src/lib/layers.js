@@ -57,6 +57,9 @@ export const CD_GEOJSON_URL = 'community_districts.geojson';
 // ── Parcel (MapPLUTO) constants ───────────────────────
 export const PARCELS_GEOJSON_URL = 'parcels.geojson';
 
+// ── Athletic surface constants ──────────────────────
+export const ATHLETIC_GEOJSON_URL = 'athletic_surfaces_enriched.geojson';
+
 export const BRONX_CD_NAMES = {
   201: 'Mott Haven / Melrose',
   202: 'Hunts Point / Longwood',
