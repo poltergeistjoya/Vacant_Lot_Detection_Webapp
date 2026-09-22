@@ -27,7 +27,7 @@ npm run dev                               # Vite dev server on :5173
 
 Open http://localhost:5173 in your browser.
 
-## Docker (production)
+## Docker (local)
 
 ```bash
 docker build -t vacant-lot-app .
@@ -35,6 +35,24 @@ docker run -p 8000:8000 vacant-lot-app
 ```
 
 Open http://localhost:8000 — serves both the API and the built frontend.
+
+## Deploy (Google Cloud Run)
+
+One-time setup:
+
+```bash
+gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
+gcloud artifacts repositories create vacant-lot --repository-format=docker --location=us-central1
+```
+
+Deploy:
+
+```bash
+./deploy.sh
+```
+
+Custom domain: add a CNAME record at your registrar pointing to
+`ghs.googlehosted.com`, then create a Cloud Run domain mapping (see PR description for details).
 
 ## Generating masks
 
