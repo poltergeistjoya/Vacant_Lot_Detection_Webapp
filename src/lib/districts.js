@@ -40,29 +40,36 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
     },
   });
 
+  function lineWidthExpr() {
+    return ['case',
+      ['boolean', ['feature-state', 'hover'], false],
+      s.hoverStrokeWidth,
+      ['interpolate', ['linear'], ['zoom'], 14, s.strokeWidth, 17, s.strokeWidth * 2.5],
+    ];
+  }
+  function lineOpacityExpr() {
+    return ['case',
+      ['boolean', ['feature-state', 'hover'], false],
+      s.hoverStrokeOpacity,
+      ['interpolate', ['linear'], ['zoom'], 14, s.strokeOpacity, 17, Math.min(s.strokeOpacity * 5, 0.85)],
+    ];
+  }
+
   map.addLayer({
     id: 'cd-line',
     type: 'line',
     source: 'districts',
     paint: {
       'line-color': s.strokeColor,
-      'line-width': [
-        'case',
-        ['boolean', ['feature-state', 'hover'], false],
-        s.hoverStrokeWidth,
-        s.strokeWidth,
-      ],
-      'line-opacity': [
-        'case',
-        ['boolean', ['feature-state', 'hover'], false],
-        s.hoverStrokeOpacity,
-        s.strokeOpacity,
-      ],
+      'line-width': lineWidthExpr(),
+      'line-opacity': lineOpacityExpr(),
     },
   });
 
   // ── Hover ──
   let hoveredId = null;
+  let cdSelected = false;
+  let selectionZoom = null; // zoom at time of CD click; re-enable hover when back at or below this
   const popup = new maplibregl.Popup({
     closeButton: false,
     closeOnClick: false,
@@ -70,7 +77,7 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
   });
 
   map.on('mousemove', 'cd-fill', (e) => {
-    if (e.features.length === 0) return;
+    if (e.features.length === 0 || cdSelected) return;
     map.getCanvas().style.cursor = 'pointer';
 
     const feat = e.features[0];
@@ -99,9 +106,25 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
     popup.remove();
   });
 
+  // Re-enable hover when user zooms back out to where they selected
+  map.on('zoom', () => {
+    if (cdSelected && selectionZoom !== null && map.getZoom() <= selectionZoom) {
+      cdSelected = false;
+      selectionZoom = null;
+    }
+    if (cdSelected) {
+      popup.remove();
+      if (hoveredId !== null) {
+        map.setFeatureState({ source: 'districts', id: hoveredId }, { hover: false });
+        hoveredId = null;
+      }
+      map.getCanvas().style.cursor = '';
+    }
+  });
+
   // ── Click → zoom ──
   map.on('click', 'cd-fill', (e) => {
-    if (e.features.length === 0) return;
+    if (e.features.length === 0 || cdSelected) return;
     // Don't zoom to district when clicking a parcel
     if (map.getLayer('parcel-fill')) {
       const parcelFeats = map.queryRenderedFeatures(e.point, { layers: ['parcel-fill'] });
@@ -124,6 +147,8 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
           (b, c) => b.extend(c),
           new maplibregl.LngLatBounds(coords[0], coords[0]),
         );
+        cdSelected = true;
+        selectionZoom = map.getZoom();
         map.fitBounds(bounds, { padding: 40, duration: 600 });
       }
     }
@@ -144,18 +169,8 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
     ]);
 
     map.setPaintProperty('cd-line', 'line-color', s.strokeColor);
-    map.setPaintProperty('cd-line', 'line-width', [
-      'case',
-      ['boolean', ['feature-state', 'hover'], false],
-      s.hoverStrokeWidth,
-      s.strokeWidth,
-    ]);
-    map.setPaintProperty('cd-line', 'line-opacity', [
-      'case',
-      ['boolean', ['feature-state', 'hover'], false],
-      s.hoverStrokeOpacity,
-      s.strokeOpacity,
-    ]);
+    map.setPaintProperty('cd-line', 'line-width', lineWidthExpr());
+    map.setPaintProperty('cd-line', 'line-opacity', lineOpacityExpr());
   }
 
   return { updateStyle, getStyle: () => ({ ...s }) };

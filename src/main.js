@@ -127,9 +127,14 @@ map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
 // ── Tile URL logic ─────────────────────────────────
 function updateTileSource() {
-  const url = layerState.naip
-    ? NAIP_TILE_URL
-    : `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`;
+  if (layerState.naip) {
+    map.getSource('product')?.setTiles([NAIP_TILE_URL]);
+    return;
+  }
+  let url = `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}`;
+  if (layerState.parcels) {
+    url += '&pluto=1';
+  }
   map.getSource('product')?.setTiles([url]);
 }
 
@@ -281,6 +286,7 @@ function toggleLayer(id, visible) {
     if (countRow) countRow.hidden = !visible;
     const legend = document.getElementById('parcel-legend');
     if (legend) legend.hidden = !visible;
+    updateTileSource();
     updateFooter();
   }
 }
@@ -288,6 +294,7 @@ function toggleLayer(id, visible) {
 // ── Threshold change ────────────────────────────────
 function onThresholdChange(cp) {
   currentTStr = cp.tStr;
+  _prefetched.clear();
   updateTileSource();
   const count = updateParcelThreshold(map, cp.tStr);
   if (count !== null) {
@@ -295,6 +302,40 @@ function onThresholdChange(cp) {
     const val = document.getElementById('parcel-count-value');
     if (val) val.textContent = parcelCount.toLocaleString();
   }
+}
+
+// ── PLUTO tile prefetch ────────────────────────────
+const _prefetched = new Set();
+let _prefetchDebounce = null;
+
+function prefetchPlutoTiles() {
+  clearTimeout(_prefetchDebounce);
+  _prefetchDebounce = setTimeout(() => {
+    const bounds = map.getBounds();
+    const zoom = Math.round(map.getZoom());
+    const n = 2 ** zoom;
+
+    const toTileX = lng => Math.floor((lng + 180) / 360 * n);
+    const toTileY = lat => {
+      const r = lat * Math.PI / 180;
+      return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
+    };
+
+    const minX = toTileX(bounds.getWest());
+    const maxX = toTileX(bounds.getEast());
+    const minY = toTileY(bounds.getNorth());
+    const maxY = toTileY(bounds.getSouth());
+
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        const key = `${zoom}/${x}/${y}/${currentTStr}`;
+        if (_prefetched.has(key)) continue;
+        _prefetched.add(key);
+        fetch(`/api/tile/product/${zoom}/${x}/${y}.png?t=${currentTStr}&pluto=1`)
+          .catch(() => {});
+      }
+    }
+  }, 1000);
 }
 
 // ── Imagery metadata ───────────────────────────────
@@ -306,6 +347,7 @@ function onMapMove() {
     imagerySource = await fetchImageryInfo(lng, lat, map.getZoom());
     updateFooter();
   }, 500);
+  prefetchPlutoTiles();
 }
 
 // ── Init ────────────────────────────────────────────
@@ -325,6 +367,7 @@ map.on('load', () => {
   onMapMove();
 
   map.on('moveend', onMapMove);
+  prefetchPlutoTiles();
 });
 
 async function addCDLayer() {

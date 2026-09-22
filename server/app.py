@@ -168,8 +168,14 @@ def _load_shared_masks():
 
     boundary_arr = (np.array(Image.open(boundary_path))[:, :, 3] > 127)
 
+    pluto_path = MASKS_DIR / "pluto_vacant.png"
+    pluto_arr = None
+    if pluto_path.exists():
+        pluto_arr = (np.array(Image.open(pluto_path))[:, :, 3] > 127)
+
     return {
         "boundary": boundary_arr,
+        "pluto_vacant": pluto_arr,
         "bounds": (ml, mb, mr, mt),
         "shape": boundary_arr.shape,
     }
@@ -197,7 +203,21 @@ def _load_product_masks(threshold_str: str):
     }
 
 
-def _get_tile_masks(z, x, y, threshold_str):
+def _crop_resize_mask(full_mask, src_top, src_bottom, src_left, src_right,
+                      dst_h, dst_w, dst_top, dst_left):
+    """Crop a full-resolution boolean mask and resize it into a 256x256 tile."""
+    crop = full_mask[src_top:src_bottom, src_left:src_right]
+    resized = np.array(
+        Image.fromarray(crop.astype(np.uint8) * 255).resize(
+            (dst_w, dst_h), Image.NEAREST
+        )
+    ) > 127
+    tile = np.zeros((256, 256), dtype=bool)
+    tile[dst_top:dst_top + dst_h, dst_left:dst_left + dst_w] = resized
+    return tile
+
+
+def _get_tile_masks(z, x, y, threshold_str, include_pluto=False):
     """Return (vacant_mask, nonvacant_mask) resized to 256x256 for this tile.
 
     Returns (None, None) if the tile is fully outside the mask extent.
@@ -221,7 +241,6 @@ def _get_tile_masks(z, x, y, threshold_str):
     px_top = (mt - tt) / my_per_px
     px_bottom = (mt - tb) / my_per_px
 
-    # Clamp to mask bounds
     src_left = max(0, int(math.floor(px_left)))
     src_top = max(0, int(math.floor(px_top)))
     src_right = min(w, int(math.ceil(px_right)))
@@ -230,32 +249,27 @@ def _get_tile_masks(z, x, y, threshold_str):
     if src_right <= src_left or src_bottom <= src_top:
         return None, None
 
-    # Crop and resize to 256x256
-    # Compute destination rect (where in the 256x256 tile this crop lands)
     dst_left = max(0, (src_left - px_left) / (px_right - px_left) * 256)
     dst_top = max(0, (src_top - px_top) / (px_bottom - px_top) * 256)
     dst_right = min(256, (src_right - px_left) / (px_right - px_left) * 256)
     dst_bottom = min(256, (src_top - px_top + (src_bottom - src_top)) / (px_bottom - px_top) * 256)
-    # Simpler: resize the cropped region to fill the destination rect
     dst_w = max(1, int(round(dst_right - dst_left)))
     dst_h = max(1, int(round(dst_bottom - dst_top)))
-
-    vacant_crop = masks["vacant"][src_top:src_bottom, src_left:src_right]
-    nonvacant_crop = masks["nonvacant"][src_top:src_bottom, src_left:src_right]
-
-    vacant_resized = np.array(
-        Image.fromarray(vacant_crop.astype(np.uint8) * 255).resize((dst_w, dst_h), Image.NEAREST)
-    ) > 127
-    nonvacant_resized = np.array(
-        Image.fromarray(nonvacant_crop.astype(np.uint8) * 255).resize((dst_w, dst_h), Image.NEAREST)
-    ) > 127
-
-    # Place into 256x256 tile
-    vacant_tile = np.zeros((256, 256), dtype=bool)
-    nonvacant_tile = np.zeros((256, 256), dtype=bool)
     dl, dt = int(round(dst_left)), int(round(dst_top))
-    vacant_tile[dt:dt + dst_h, dl:dl + dst_w] = vacant_resized
-    nonvacant_tile[dt:dt + dst_h, dl:dl + dst_w] = nonvacant_resized
+
+    vacant_tile = _crop_resize_mask(
+        masks["vacant"], src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
+    nonvacant_tile = _crop_resize_mask(
+        masks["nonvacant"], src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
+
+    if include_pluto:
+        shared = _load_shared_masks()
+        pluto_full = shared.get("pluto_vacant") if shared else None
+        if pluto_full is not None:
+            pluto_tile = _crop_resize_mask(
+                pluto_full, src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
+            vacant_tile = vacant_tile | pluto_tile
+            nonvacant_tile = nonvacant_tile & ~pluto_tile
 
     return vacant_tile, nonvacant_tile
 
@@ -460,6 +474,7 @@ def _aliases_to_color_params(
 async def product_tile(
     z: int, x: int, y: int,
     t: str = Query("t0298"),
+    pluto: int = Query(0),
     mode: str = Query(None),
     # Basemap treatment (playground mode)
     bm_sc: float = Query(0), bm_sb: float = Query(0.5),
@@ -507,7 +522,7 @@ async def product_tile(
         vc_kwargs = PRODUCT_VC
         nv_kwargs = PRODUCT_NV
 
-    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t)
+    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, include_pluto=bool(pluto))
 
     if vacant_mask is None:
         result = apply_color_ops(arr, **bm_kwargs)

@@ -24,6 +24,9 @@ from rasterio.features import rasterize
 from rasterio.warp import calculate_default_transform, reproject
 from rasterio.enums import Resampling
 from shapely.geometry import shape, mapping
+from shapely.ops import transform as shapely_transform
+from pyproj import Transformer
+from PIL import Image
 
 from config import load_config
 from logger import get_logger
@@ -49,6 +52,8 @@ ARCGIS_SERVICE_URL = (
     "https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services"
     "/MAPPLUTO/FeatureServer/0"
 )
+
+_MASKS_DIR = _DATA / "masks"
 
 
 def _t_str(t):
@@ -197,6 +202,61 @@ def _compute_parcel_coverages(features, prob, dst_transform, dst_h, dst_w, thres
     return coverage
 
 
+def _generate_pluto_mask(features, pluto_vacant_bbls):
+    """Rasterize PLUTO-vacant parcels onto the shared mask grid."""
+    bounds_path = _MASKS_DIR / "bounds.json"
+    boundary_path = _MASKS_DIR / "boundary.png"
+
+    if not bounds_path.exists() or not boundary_path.exists():
+        log.warning("Mask grid not found at %s — run prepare_mask_overlay.py first. "
+                    "Skipping PLUTO vacancy raster.", _MASKS_DIR)
+        return
+
+    bounds_wgs84 = json.loads(bounds_path.read_text())
+    boundary_img = np.array(Image.open(boundary_path))
+    h, w = boundary_img.shape[:2]
+    boundary_mask = boundary_img[:, :, 3] > 127
+
+    transformer = Transformer.from_crs("EPSG:4326", "EPSG:3857", always_xy=True)
+    ml, mb = transformer.transform(bounds_wgs84["west"], bounds_wgs84["south"])
+    mr, mt = transformer.transform(bounds_wgs84["east"], bounds_wgs84["north"])
+
+    from rasterio.transform import from_bounds as rio_from_bounds
+    dst_transform = rio_from_bounds(ml, mb, mr, mt, w, h)
+
+    shapes = []
+    for feat in features:
+        bbl = feat["properties"].get("BBL")
+        if bbl not in pluto_vacant_bbls:
+            continue
+        geom_raw = feat.get("geometry")
+        if geom_raw is None:
+            continue
+        geom = shape(geom_raw)
+        if not geom.is_valid:
+            geom = geom.buffer(0)
+        shapes.append(shapely_transform(transformer.transform, geom))
+
+    if not shapes:
+        log.warning("No PLUTO-vacant geometries to rasterize.")
+        return
+
+    log.info("Rasterizing %d PLUTO-vacant parcels onto mask grid (%dx%d)…",
+             len(shapes), w, h)
+    mask = rasterize(
+        shapes, out_shape=(h, w), transform=dst_transform,
+        fill=0, default_value=1, dtype="uint8",
+    ).astype(bool)
+
+    mask &= boundary_mask
+
+    rgba = np.zeros((h, w, 4), dtype=np.uint8)
+    rgba[mask] = [255, 255, 255, 255]
+    out_path = _MASKS_DIR / "pluto_vacant.png"
+    Image.fromarray(rgba, mode="RGBA").save(out_path)
+    log.info("Wrote PLUTO vacancy raster: %s (%d pixels)", out_path, int(mask.sum()))
+
+
 @click.command()
 @click.option("--force-download", is_flag=True,
               help="Re-download MapPLUTO even if cache exists.")
@@ -226,6 +286,8 @@ def main(force_download):
         if f["properties"].get("LandUse") == "11"
     }
     log.info("%d parcels recorded as vacant (LandUse=11).", len(pluto_vacant_bbls))
+
+    _generate_pluto_mask(features, pluto_vacant_bbls)
 
     prob, dst_transform, dst_h, dst_w = _load_prediction_grid(pred_tif)
     coverage = _compute_parcel_coverages(
