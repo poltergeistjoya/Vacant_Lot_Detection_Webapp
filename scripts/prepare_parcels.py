@@ -37,11 +37,16 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DATA = _REPO_ROOT / "data"
 _CACHE = _DATA / "cache"
 
+# Stamped into the cache so a changed query invalidates it. Without this a new
+# entry in ARCGIS_FIELDS silently yields a column of nulls: the download is
+# skipped, the field is never fetched, and every props.get() returns None.
+_CACHE_QUERY_KEY = "_query"
+
 ARCGIS_URL = (
     "https://services5.arcgis.com/GfwWNkhOj9bNBqoJ/arcgis/rest/services"
     "/MAPPLUTO/FeatureServer/0/query"
 )
-ARCGIS_FIELDS = "BBL,Address,OwnerName,OwnerType,LotArea,ZoneDist1,LandUse"
+ARCGIS_FIELDS = "BBL,Address,OwnerName,OwnerType,LotArea,ZoneDist1,LandUse,CD"
 ARCGIS_PAGE_SIZE = 2000
 
 DST_CRS = "EPSG:4326"
@@ -76,11 +81,41 @@ def _fetch_pluto_version() -> str:
     return "unknown"
 
 
+def _query_id() -> dict:
+    """What a cached download is a download *of*."""
+    return {"url": ARCGIS_URL, "fields": ARCGIS_FIELDS}
+
+
+def _cache_is_current(cached: dict) -> bool:
+    """Whether a cached FeatureCollection answers the query we are about to make."""
+    cached_q = cached.get(_CACHE_QUERY_KEY)
+    if cached_q == _query_id():
+        return True
+
+    if cached_q is None:
+        log.info("Cached MapPLUTO predates query stamping; re-downloading.")
+        return False
+
+    if cached_q.get("url") != ARCGIS_URL:
+        log.info("MapPLUTO endpoint changed since the cache was written; re-downloading.")
+        return False
+
+    cached_fields = set(filter(None, (cached_q.get("fields") or "").split(",")))
+    added = sorted(set(ARCGIS_FIELDS.split(",")) - cached_fields)
+    log.info(
+        "Cached MapPLUTO is missing requested field(s): %s; re-downloading.",
+        ", ".join(added) or "(field list reordered)",
+    )
+    return False
+
+
 def _fetch_pluto(cache_path: Path) -> dict:
     if cache_path.exists():
-        log.info("Using cached MapPLUTO: %s", cache_path)
         with cache_path.open() as f:
-            return json.load(f)
+            cached = json.load(f)
+        if _cache_is_current(cached):
+            log.info("Using cached MapPLUTO: %s", cache_path)
+            return cached
 
     log.info("Downloading Bronx MapPLUTO from ArcGIS FeatureServer…")
     all_features = []
@@ -110,7 +145,11 @@ def _fetch_pluto(cache_path: Path) -> dict:
             break
         offset += len(feats)
 
-    fc = {"type": "FeatureCollection", "features": all_features}
+    fc = {
+        "type": "FeatureCollection",
+        _CACHE_QUERY_KEY: _query_id(),
+        "features": all_features,
+    }
     _CACHE.mkdir(parents=True, exist_ok=True)
     with cache_path.open("w") as f:
         json.dump(fc, f)
@@ -329,6 +368,9 @@ def main(force_download):
             "lot_area": props.get("LotArea"),
             "zoning": props.get("ZoneDist1", ""),
             "land_use": props.get("LandUse", ""),
+            # MapPLUTO's CD is the same boro-prefixed code as the district
+            # layer's BoroCD (201-212, 226-228), so it joins without a lookup.
+            "cd": props.get("CD"),
             "pluto_vacant": is_pluto,
         }
         for t in thresholds:

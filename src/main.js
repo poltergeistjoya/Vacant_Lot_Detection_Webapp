@@ -7,7 +7,12 @@ import {
   BRONX_CD_NAMES,
 } from './lib/layers.js';
 import { addDistrictLayer } from './lib/districts.js';
-import { addParcelLayer, updateParcelThreshold } from './lib/parcels.js';
+import {
+  addParcelLayer,
+  updateParcelThreshold,
+  countParcels,
+  hasDistrictField,
+} from './lib/parcels.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
 
@@ -22,7 +27,6 @@ const layerState = {
 };
 
 let selectedCD = null;
-let parcelCount = 0;
 let plutoVersion = '';
 let imagerySource = 'Esri World Imagery';
 
@@ -62,6 +66,105 @@ async function fetchImageryInfo(lng, lat, zoom) {
     }
   } catch { /* fall through */ }
   return 'Esri World Imagery';
+}
+
+// ── Stats ─────────────────────────────────────────
+const VACANT_TIP = 'Vacant lots found by model or recorded in MapPLUTO';
+
+// The park districts (226-228) are not real community districts and have no
+// profile page, so only the twelve numbered ones get an outbound link.
+function cdProfileUrl(boroCD) {
+  const cdNum = boroCD % 100;
+  return cdNum <= 12
+    ? `https://communityprofiles.planning.nyc.gov/bronx/${cdNum}`
+    : null;
+}
+
+function statRow(label, value, tip) {
+  const row = document.createElement('div');
+  row.className = 'stat-row';
+
+  const name = document.createElement('span');
+  name.textContent = `${label} `;
+
+  const val = document.createElement('strong');
+  val.textContent = value;
+
+  row.append(name, val);
+  if (tip) row.append(makeTooltipChip(tip));
+  return row;
+}
+
+function note(text) {
+  const el = document.createElement('p');
+  el.className = 'stat-note';
+  el.textContent = text;
+  return el;
+}
+
+function renderBronxStats() {
+  const el = document.getElementById('stat-bronx');
+  if (!el) return;
+  el.replaceChildren();
+
+  const total = countParcels();
+  el.append(statRow(
+    'Vacant Lots Found',
+    total === null ? '—' : total.toLocaleString(),
+    VACANT_TIP,
+  ));
+}
+
+function renderDistrictStats() {
+  const el = document.getElementById('stat-cd');
+  if (!el) return;
+  el.replaceChildren();
+
+  if (!selectedCD) {
+    el.append(note('Click a district on the map to select it.'));
+    return;
+  }
+
+  const cdNum = selectedCD % 100;
+
+  const num = document.createElement('div');
+  num.className = 'cd-num';
+  num.textContent = `Bronx CD ${cdNum}`;
+  el.append(num);
+
+  const name = document.createElement('div');
+  name.className = 'cd-name';
+  name.textContent = BRONX_CD_NAMES[selectedCD] || `District ${cdNum}`;
+  el.append(name);
+
+  if (hasDistrictField()) {
+    el.append(statRow(
+      'Vacant Lots Found',
+      (countParcels({ cd: selectedCD }) ?? 0).toLocaleString(),
+      VACANT_TIP,
+    ));
+  } else {
+    // parcels.geojson predates the cd field; regenerating it fills this in.
+    el.append(note('Per-district counts need a regenerated parcels.geojson.'));
+  }
+
+  const url = cdProfileUrl(selectedCD);
+  if (url) {
+    const link = document.createElement('a');
+    link.className = 'cd-profile-link';
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'NYC Community Profile \u2197';
+    el.append(link);
+  }
+}
+
+// Single entry point: every handler that changes what the stats depend on
+// calls this, rather than each one writing to its own element.
+function updateStats() {
+  renderBronxStats();
+  renderDistrictStats();
 }
 
 // ── Footer ────────────────────────────────────────
@@ -151,6 +254,32 @@ function applyBasemapTreatment(bm) {
   }
 }
 
+// ── Tooltip chip ────────────────────────────────────
+// Chips escape the sidebar's scroll container by positioning against the
+// viewport, so the text is placed on hover rather than in CSS.
+function makeTooltipChip(text) {
+  const chip = document.createElement('span');
+  chip.className = 'tooltip-chip';
+  chip.textContent = '?';
+
+  const tipText = document.createElement('span');
+  tipText.className = 'tooltip-text';
+  tipText.textContent = text;
+  chip.append(tipText);
+
+  chip.addEventListener('mouseenter', () => {
+    const r = chip.getBoundingClientRect();
+    const sidebar = document.querySelector('.sidebar');
+    const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
+    tipText.style.top = `${r.top}px`;
+    tipText.style.left = `${sidebarRight + 8}px`;
+    tipText.style.display = 'block';
+  });
+  chip.addEventListener('mouseleave', () => { tipText.style.display = 'none'; });
+
+  return chip;
+}
+
 // ── Layer panel ─────────────────────────────────────
 const LAYERS = [
   { id: 'naip',    label: 'NAIP Imagery',       defaultOn: false, tooltip: TOOLTIPS.naip },
@@ -178,58 +307,12 @@ function buildLayerPanel() {
     label.htmlFor = cb.id;
     label.textContent = l.label;
 
-    const tip = document.createElement('span');
-    tip.className = 'tooltip-chip';
-    tip.textContent = '?';
-    const tipText = document.createElement('span');
-    tipText.className = 'tooltip-text';
-    tipText.textContent = l.tooltip;
-    tip.append(tipText);
-    tip.addEventListener('mouseenter', () => {
-      const r = tip.getBoundingClientRect();
-      const sidebar = document.querySelector('.sidebar');
-      const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
-      tipText.style.top = `${r.top}px`;
-      tipText.style.left = `${sidebarRight + 8}px`;
-      tipText.style.display = 'block';
-    });
-    tip.addEventListener('mouseleave', () => { tipText.style.display = 'none'; });
+    const tip = makeTooltipChip(l.tooltip);
 
     row.append(cb, label, tip);
     panel.append(row);
 
     if (l.id === 'parcels') {
-      const countRow = document.createElement('div');
-      countRow.id = 'parcel-count-row';
-      countRow.className = 'layer-stat';
-      countRow.hidden = true;
-
-      const countLabel = document.createElement('span');
-      countLabel.textContent = 'Vacant Lots Found ';
-
-      const countValue = document.createElement('strong');
-      countValue.id = 'parcel-count-value';
-
-      const countTip = document.createElement('span');
-      countTip.className = 'tooltip-chip';
-      countTip.textContent = '?';
-      const countTipText = document.createElement('span');
-      countTipText.className = 'tooltip-text';
-      countTipText.textContent = 'Vacant lots found by model or recorded in MapPLUTO';
-      countTip.append(countTipText);
-      countTip.addEventListener('mouseenter', () => {
-        const r = countTip.getBoundingClientRect();
-        const sidebar = document.querySelector('.sidebar');
-        const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
-        countTipText.style.top = `${r.top}px`;
-        countTipText.style.left = `${sidebarRight + 8}px`;
-        countTipText.style.display = 'block';
-      });
-      countTip.addEventListener('mouseleave', () => { countTipText.style.display = 'none'; });
-
-      countRow.append(countLabel, countValue, countTip);
-      panel.append(countRow);
-
       const legend = document.createElement('div');
       legend.id = 'parcel-legend';
       legend.className = 'legend';
@@ -257,10 +340,43 @@ function buildLayerPanel() {
         legend.append(item);
       });
 
+      const peekBtn = document.createElement('button');
+      peekBtn.id = 'peek-btn';
+      peekBtn.className = 'peek-btn';
+      peekBtn.textContent = 'Peek (hold V)';
+      peekBtn.addEventListener('mousedown', () => setPeek(true));
+      peekBtn.addEventListener('mouseup', () => setPeek(false));
+      peekBtn.addEventListener('mouseleave', () => setPeek(false));
+      legend.append(peekBtn);
+
       panel.append(legend);
     }
   });
 }
+
+// ── Peek overlay ──────────────────────────────────
+let _peeking = false;
+
+function setPeek(on) {
+  if (on === _peeking) return;
+  if (on && !layerState.parcels) return;
+  _peeking = on;
+  map.setLayoutProperty('product-layer', 'visibility', on ? 'none' : 'visible');
+  const btn = document.getElementById('peek-btn');
+  if (btn) btn.classList.toggle('active', on);
+  const cb = document.getElementById('layer-overlay');
+  if (cb) cb.checked = !on;
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'v' || e.key === 'V') {
+    if (e.repeat) return;
+    setPeek(true);
+  }
+});
+document.addEventListener('keyup', (e) => {
+  if (e.key === 'v' || e.key === 'V') setPeek(false);
+});
 
 function toggleLayer(id, visible) {
   if (id === 'overlay') {
@@ -282,10 +398,9 @@ function toggleLayer(id, visible) {
     const vis = visible ? 'visible' : 'none';
     if (map.getLayer('parcel-fill')) map.setLayoutProperty('parcel-fill', 'visibility', vis);
     if (map.getLayer('parcel-line')) map.setLayoutProperty('parcel-line', 'visibility', vis);
-    const countRow = document.getElementById('parcel-count-row');
-    if (countRow) countRow.hidden = !visible;
     const legend = document.getElementById('parcel-legend');
     if (legend) legend.hidden = !visible;
+    if (!visible && _peeking) setPeek(false);
     updateTileSource();
     updateFooter();
   }
@@ -296,12 +411,8 @@ function onThresholdChange(cp) {
   currentTStr = cp.tStr;
   _prefetched.clear();
   updateTileSource();
-  const count = updateParcelThreshold(map, cp.tStr);
-  if (count !== null) {
-    parcelCount = count;
-    const val = document.getElementById('parcel-count-value');
-    if (val) val.textContent = parcelCount.toLocaleString();
-  }
+  updateParcelThreshold(map, cp.tStr);
+  updateStats();
 }
 
 // ── PLUTO tile prefetch ────────────────────────────
@@ -356,10 +467,8 @@ map.on('load', () => {
   addCDLayer();
   addParcelLayer(map, currentTStr).then(info => {
     if (info) {
-      parcelCount = info.count;
       plutoVersion = info.version;
-      const val = document.getElementById('parcel-count-value');
-      if (val) val.textContent = parcelCount.toLocaleString();
+      updateStats();
     }
   });
   buildLayerPanel();
@@ -384,12 +493,14 @@ async function addCDLayer() {
       style: cdStyle,
       onSelect(boroCD) {
         selectedCD = boroCD;
+        updateStats();
         updateFooter();
       },
     });
   } catch (e) { console.error('addDistrictLayer failed:', e); }
 }
 
+updateStats();
 initSlider(document.getElementById('slider-container'), onThresholdChange);
 
 async function loadThresholds() {
