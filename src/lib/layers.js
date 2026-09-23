@@ -10,7 +10,7 @@ export const ESRI_METADATA_URL =
 export const BRONX_CENTER = [40.8501, -73.8662];
 export const BRONX_CENTER_LNG_LAT = [-73.855, 40.855];
 export const DEFAULT_ZOOM = 13;
-export const MIN_ZOOM = 9;
+export const MIN_ZOOM = 11;
 export const MAX_BOUNDS = [[-74.65, 40.3], [-73.05, 41.4]];
 
 // ── Playground constants ─────────────────────────────

@@ -238,6 +238,15 @@ const map = new maplibregl.Map({
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
+// ── Loading bar ──────────────────────────────────
+const loadingBar = document.getElementById('map-loading-bar');
+map.on('dataloading', (e) => {
+  if (e.dataType === 'source' && loadingBar) loadingBar.hidden = false;
+});
+map.on('idle', () => {
+  if (loadingBar) loadingBar.hidden = true;
+});
+
 // ── Tile URL logic ─────────────────────────────────
 function updateTileSource() {
   if (layerState.naip) {
@@ -274,22 +283,29 @@ function makeTooltipChip(text) {
   tipText.textContent = text;
   chip.append(tipText);
 
-  chip.addEventListener('mouseenter', () => {
-    const r = chip.getBoundingClientRect();
-    const sidebar = document.querySelector('.sidebar');
-    const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
-    tipText.style.top = `${r.top}px`;
-    tipText.style.left = `${sidebarRight + 8}px`;
-    tipText.style.display = 'block';
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const isVisible = tipText.style.display === 'block';
+    document.querySelectorAll('.tooltip-text').forEach(t => { t.style.display = 'none'; });
+    if (!isVisible) {
+      const r = chip.getBoundingClientRect();
+      const sidebar = document.querySelector('.sidebar');
+      const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
+      tipText.style.top = `${r.top}px`;
+      tipText.style.left = `${sidebarRight + 8}px`;
+      tipText.style.display = 'block';
+    }
   });
-  chip.addEventListener('mouseleave', () => { tipText.style.display = 'none'; });
 
   return chip;
 }
 
+document.addEventListener('click', () => {
+  document.querySelectorAll('.tooltip-text').forEach(t => { t.style.display = 'none'; });
+});
+
 // ── Layer panel ─────────────────────────────────────
 const LAYERS = [
-  { id: 'naip',    label: 'NAIP Imagery',       defaultOn: false, tooltip: TOOLTIPS.naip },
   { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true,  tooltip: TOOLTIPS.overlay },
   { id: 'cd',      label: 'Community Districts', defaultOn: true,  tooltip: TOOLTIPS.cd },
   { id: 'parcels',  label: 'Parcel Ownership',    defaultOn: false, tooltip: TOOLTIPS.parcels },
@@ -386,10 +402,13 @@ function buildLayerPanel() {
       const peekBtn = document.createElement('button');
       peekBtn.id = 'peek-btn';
       peekBtn.className = 'peek-btn';
-      peekBtn.textContent = 'Peek (hold V)';
+      peekBtn.textContent = 'Peek (hold)';
       peekBtn.addEventListener('mousedown', () => setPeek(true));
       peekBtn.addEventListener('mouseup', () => setPeek(false));
       peekBtn.addEventListener('mouseleave', () => setPeek(false));
+      peekBtn.addEventListener('touchstart', (e) => { e.preventDefault(); setPeek(true); });
+      peekBtn.addEventListener('touchend', () => setPeek(false));
+      peekBtn.addEventListener('touchcancel', () => setPeek(false));
       legend.append(peekBtn);
 
       panel.append(legend);
@@ -576,7 +595,6 @@ function prefetchPlutoTiles() {
       }
     }
   }, 1000);
-}
 }
 
 // ── Imagery metadata ───────────────────────────────

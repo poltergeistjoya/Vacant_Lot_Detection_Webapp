@@ -18,12 +18,15 @@ export function initSlider(container, onChange) {
       <input type="range" id="threshold-slider" min="0" max="${CHECKPOINTS.length - 1}" step="1" value="${defaultIdx}">
     </div>
     <div class="threshold-value" id="t-display">${DEFAULT_THRESHOLD.toFixed(3)}</div>
-    <div class="metrics" id="metrics">
-      <div class="metric"><span class="metric-label">Precision</span><span class="metric-value" id="mv-precision">—</span></div>
-      <div class="metric"><span class="metric-label">Recall</span><span class="metric-value" id="mv-recall">—</span></div>
-      <div class="metric"><span class="metric-label">F1</span><span class="metric-value" id="mv-f1">—</span></div>
-      <div class="metric"><span class="metric-label">F2</span><span class="metric-value" id="mv-f2">—</span></div>
-    </div>
+    <details class="metrics-details">
+      <summary class="metrics-summary">Model Metrics</summary>
+      <div class="metrics" id="metrics">
+        <div class="metric"><span class="metric-label">Precision</span><span class="metric-value" id="mv-precision">—</span></div>
+        <div class="metric"><span class="metric-label">Recall</span><span class="metric-value" id="mv-recall">—</span></div>
+        <div class="metric"><span class="metric-label">F1</span><span class="metric-value" id="mv-f1">—</span></div>
+        <div class="metric"><span class="metric-label">F2</span><span class="metric-value" id="mv-f2">—</span></div>
+      </div>
+    </details>
   `;
   positionGoodZone();
   const slider = document.getElementById('threshold-slider');
