@@ -98,7 +98,6 @@ export async function createMap(containerId) {
   let currentBm = {};
   let currentVc = {};
   let currentNv = {};
-
   function _rebuildTileSource() {
     const url = productTileUrl(currentThreshold, currentBm, currentVc, currentNv);
     if (map.getLayer('product')) map.removeLayer('product');

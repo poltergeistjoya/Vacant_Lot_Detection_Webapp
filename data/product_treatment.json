@@ -1,10 +1,6 @@
 {
-  "name": "final_cd_highlight",
-  "basemap": {
-    "grayscale": 0.6,
-    "brightness": 0.8
-  },
-  "vacant": {
+  "name": "production_outside_boundary_less_gray_nv",
+  "base": {
     "sig_contrast": 6,
     "sig_bias": 0.38,
     "gam_master": 1.11,
@@ -14,8 +10,13 @@
     "sat": 1.8,
     "brightness": 0.83
   },
-  "nonvacant": {
+  "outside": {
+    "sat": 0.78,
     "grayscale": 1.0,
+    "brightness": 0.37
+  },
+  "nonvacant": {
+    "grayscale": 0.77,
     "brightness": 0.52
   },
   "cd": {

@@ -311,8 +311,8 @@ async function loadPresets() {
       const key = select.value;
       if (!key || !presets[key]) return;
       const p = presets[key];
-      Object.assign(state.bm, { ...TREATMENT_DEFAULTS, ...(p.basemap || {}) });
-      Object.assign(state.vc, { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS, ...(p.vacant || {}) });
+      Object.assign(state.bm, { ...TREATMENT_DEFAULTS, ...(p.base || {}) });
+      Object.assign(state.vc, { ...TREATMENT_DEFAULTS, ...VACANT_EXTRA_DEFAULTS, ...(p.outside || {}) });
       Object.assign(state.nv, { ...TREATMENT_DEFAULTS, ...(p.nonvacant || {}) });
       if (p.cd) {
         Object.assign(state.cd, { ...cdStyleDefaults, enabled: true, ...p.cd });
