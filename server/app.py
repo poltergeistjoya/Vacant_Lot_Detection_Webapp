@@ -5,10 +5,12 @@ mask-based regional treatment (basemap / vacant / non-vacant), and
 returns processed PNGs.
 """
 
+import asyncio
 import io
 import json
 import math
 import time
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
 
@@ -38,12 +40,45 @@ ESRI_URL = (
 _client = httpx.AsyncClient(timeout=15.0, limits=httpx.Limits(max_connections=20))
 
 
-async def fetch_esri_tile(z: int, x: int, y: int) -> bytes:
-    """Fetch a single Esri basemap tile."""
+async def _fetch_esri_raw(z: int, x: int, y: int) -> bytes:
     url = ESRI_URL.format(z=z, y=y, x=x)
     resp = await _client.get(url)
     resp.raise_for_status()
     return resp.content
+
+
+_ESRI_CACHE_MAX = 512
+_esri_cache: OrderedDict[tuple, bytes] = OrderedDict()
+_esri_inflight: dict[tuple, asyncio.Future] = {}
+
+
+async def fetch_esri_tile(z: int, x: int, y: int) -> bytes:
+    """Fetch an Esri basemap tile, with in-memory LRU cache."""
+    key = (z, x, y)
+
+    if key in _esri_cache:
+        _esri_cache.move_to_end(key)
+        return _esri_cache[key]
+
+    if key in _esri_inflight:
+        return await _esri_inflight[key]
+
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future[bytes] = loop.create_future()
+    _esri_inflight[key] = fut
+    try:
+        data = await _fetch_esri_raw(z, x, y)
+        _esri_cache[key] = data
+        _esri_cache.move_to_end(key)
+        while len(_esri_cache) > _ESRI_CACHE_MAX:
+            _esri_cache.popitem(last=False)
+        fut.set_result(data)
+        return data
+    except Exception as e:
+        fut.set_exception(e)
+        raise
+    finally:
+        _esri_inflight.pop(key, None)
 
 
 # ── Color operations ─────────────────────────────────
@@ -611,6 +646,10 @@ def _aliases_to_color_params(
     )
 
 
+_PRODUCT_CACHE_MAX = 1024
+_product_cache: OrderedDict[tuple, bytes] = OrderedDict()
+
+
 @app.get("/api/tile/product/{z}/{x}/{y}.png")
 async def product_tile(
     z: int, x: int, y: int,
@@ -645,6 +684,15 @@ async def product_tile(
     bm_* = base treatment, vc_* = outside boundary treatment, nv_* = non-vacant.
     Without mode=playground, uses baked-in treatments from product_treatment.json.
     """
+    src = source if source in ("model", "pluto", "both") else "both"
+
+    if mode != "playground":
+        cache_key = (z, x, y, t, src)
+        if cache_key in _product_cache:
+            _product_cache.move_to_end(cache_key)
+            return Response(content=_product_cache[cache_key], media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=3600"})
+
     tile_bytes = await fetch_esri_tile(z, x, y)
 
     if mode == "playground":
@@ -665,15 +713,19 @@ async def product_tile(
         outside_kwargs = PRODUCT_OUTSIDE
         nv_kwargs = PRODUCT_NV
 
-    src = source if source in ("model", "pluto", "both") else "both"
     vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, source=src)
 
     tile_u8 = tile_bytes_to_uint8(tile_bytes)
 
     # Tile fully outside study area — use outside treatment
     if vacant_mask is None:
-        result = apply_color_ops_fast(tile_u8, **outside_kwargs)
-        return Response(content=uint8_to_png(result), media_type="image/png",
+        png = uint8_to_png(apply_color_ops_fast(tile_u8, **outside_kwargs))
+        if mode != "playground":
+            _product_cache[cache_key] = png
+            _product_cache.move_to_end(cache_key)
+            while len(_product_cache) > _PRODUCT_CACHE_MAX:
+                _product_cache.popitem(last=False)
+        return Response(content=png, media_type="image/png",
                         headers={"Cache-Control": "public, max-age=3600"})
 
     # Base applied everywhere (vacant pixels keep this)
@@ -690,9 +742,16 @@ async def product_tile(
         outside_out = apply_color_ops_fast(tile_u8, **outside_kwargs)
         result[outside_pixels] = outside_out[outside_pixels]
 
-    cache = "no-cache" if mode == "playground" else "public, max-age=3600"
-    return Response(content=uint8_to_png(result), media_type="image/png",
-                    headers={"Cache-Control": cache})
+    png = uint8_to_png(result)
+    if mode != "playground":
+        _product_cache[cache_key] = png
+        _product_cache.move_to_end(cache_key)
+        while len(_product_cache) > _PRODUCT_CACHE_MAX:
+            _product_cache.popitem(last=False)
+
+    cache_header = "no-cache" if mode == "playground" else "public, max-age=3600"
+    return Response(content=png, media_type="image/png",
+                    headers={"Cache-Control": cache_header})
 
 
 def _color_params_to_aliases(params: dict) -> dict:
