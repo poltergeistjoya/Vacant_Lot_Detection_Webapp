@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PROJECT="vacant-lot-detection"
-REGION="us-central1"
+REGION="us-east4"
 REPO="vacant-lot"
 SERVICE="vacant-lot-app"
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPO/app"

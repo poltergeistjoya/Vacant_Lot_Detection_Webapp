@@ -201,7 +201,7 @@ const map = new maplibregl.Map({
       },
       product: {
         type: 'raster',
-        tiles: [`/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}&source=both`],
+        tiles: [`/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=both`],
         tileSize: 256,
       },
     },
@@ -234,7 +234,7 @@ function updateTileSource() {
     map.getSource('product')?.setTiles([NAIP_TILE_URL]);
     return;
   }
-  const url = `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}&source=${vacancySource}`;
+  const url = `/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=${vacancySource}`;
   map.getSource('product')?.setTiles([url]);
 }
 
@@ -572,7 +572,7 @@ function prefetchPlutoTiles() {
         const key = `${zoom}/${x}/${y}/${currentTStr}`;
         if (_prefetched.has(key)) continue;
         _prefetched.add(key);
-        fetch(`/api/tile/product/${zoom}/${x}/${y}.png?t=${currentTStr}&source=${vacancySource}`)
+        fetch(`/api/tile/product/${zoom}/${x}/${y}.jpg?t=${currentTStr}&source=${vacancySource}`)
           .catch(() => {});
       }
     }

@@ -171,6 +171,14 @@ def uint8_to_png(arr: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+def uint8_to_jpeg(arr: np.ndarray, quality: int = 85) -> bytes:
+    """(H, W, 3) uint8 array → JPEG bytes."""
+    img = Image.fromarray(arr, "RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
 # ── LUT-based fast color ops ─────────────────────────
 
 def _build_channel_lut(sig_contrast=0, sig_bias=0.5, gam_master=1, gam=1,
@@ -650,7 +658,7 @@ _PRODUCT_CACHE_MAX = 1024
 _product_cache: OrderedDict[tuple, bytes] = OrderedDict()
 
 
-@app.get("/api/tile/product/{z}/{x}/{y}.png")
+@app.get("/api/tile/product/{z}/{x}/{y}.jpg")
 async def product_tile(
     z: int, x: int, y: int,
     t: str = Query("t0298"),
@@ -690,7 +698,7 @@ async def product_tile(
         cache_key = (z, x, y, t, src)
         if cache_key in _product_cache:
             _product_cache.move_to_end(cache_key)
-            return Response(content=_product_cache[cache_key], media_type="image/png",
+            return Response(content=_product_cache[cache_key], media_type="image/jpeg",
                             headers={"Cache-Control": "public, max-age=3600"})
 
     tile_bytes = await fetch_esri_tile(z, x, y)
@@ -719,13 +727,13 @@ async def product_tile(
 
     # Tile fully outside study area — use outside treatment
     if vacant_mask is None:
-        png = uint8_to_png(apply_color_ops_fast(tile_u8, **outside_kwargs))
+        tile_out = uint8_to_jpeg(apply_color_ops_fast(tile_u8, **outside_kwargs))
         if mode != "playground":
-            _product_cache[cache_key] = png
+            _product_cache[cache_key] = tile_out
             _product_cache.move_to_end(cache_key)
             while len(_product_cache) > _PRODUCT_CACHE_MAX:
                 _product_cache.popitem(last=False)
-        return Response(content=png, media_type="image/png",
+        return Response(content=tile_out, media_type="image/jpeg",
                         headers={"Cache-Control": "public, max-age=3600"})
 
     # Base applied everywhere (vacant pixels keep this)
@@ -742,15 +750,15 @@ async def product_tile(
         outside_out = apply_color_ops_fast(tile_u8, **outside_kwargs)
         result[outside_pixels] = outside_out[outside_pixels]
 
-    png = uint8_to_png(result)
+    tile_out = uint8_to_jpeg(result)
     if mode != "playground":
-        _product_cache[cache_key] = png
+        _product_cache[cache_key] = tile_out
         _product_cache.move_to_end(cache_key)
         while len(_product_cache) > _PRODUCT_CACHE_MAX:
             _product_cache.popitem(last=False)
 
     cache_header = "no-cache" if mode == "playground" else "public, max-age=3600"
-    return Response(content=png, media_type="image/png",
+    return Response(content=tile_out, media_type="image/jpeg",
                     headers={"Cache-Control": cache_header})
 
 

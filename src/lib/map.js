@@ -25,7 +25,7 @@ function productTileUrl(threshold, bm, vc, nv) {
     }
   }
 
-  return `/api/tile/product/{z}/{x}/{y}.png?${params}`;
+  return `/api/tile/product/{z}/{x}/{y}.jpg?${params}`;
 }
 
 /**
