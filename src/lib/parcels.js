@@ -10,21 +10,24 @@ const COLORS = {
 };
 
 let _currentTStr = 't0298';
+let _currentSource = 'both';
 let _metadata = null;
 let _coverageThreshold = DEFAULT_COVERAGE;
 let _geojson = null;
 
-function filterExpr(tStr) {
-  return [
-    'any',
-    ['==', ['get', 'pluto_vacant'], true],
-    ['>=', ['get', tStr], _coverageThreshold],
-  ];
-}
-
-function colorExpr(tStr) {
+function filterExpr(tStr, source) {
   const isModel = ['>=', ['get', tStr], _coverageThreshold];
   const isPluto = ['==', ['get', 'pluto_vacant'], true];
+  if (source === 'model') return isModel;
+  if (source === 'pluto') return isPluto;
+  return ['any', isPluto, isModel];
+}
+
+function colorExpr(tStr, source) {
+  const isModel = ['>=', ['get', tStr], _coverageThreshold];
+  const isPluto = ['==', ['get', 'pluto_vacant'], true];
+  if (source === 'model') return COLORS.model_only;
+  if (source === 'pluto') return COLORS.pluto_only;
   return [
     'case',
     ['all', isPluto, isModel], COLORS.both,
@@ -103,9 +106,9 @@ export async function addParcelLayer(map, initialTStr) {
       source: 'parcels',
       minzoom: 12,
       layout: { visibility: 'none' },
-      filter: filterExpr(_currentTStr),
+      filter: filterExpr(_currentTStr, _currentSource),
       paint: {
-        'fill-color': colorExpr(_currentTStr),
+        'fill-color': colorExpr(_currentTStr, _currentSource),
         'fill-opacity': [
           'case',
           ['boolean', ['feature-state', 'hover'], false],
@@ -124,9 +127,9 @@ export async function addParcelLayer(map, initialTStr) {
       source: 'parcels',
       minzoom: 12,
       layout: { visibility: 'none' },
-      filter: filterExpr(_currentTStr),
+      filter: filterExpr(_currentTStr, _currentSource),
       paint: {
-        'line-color': colorExpr(_currentTStr),
+        'line-color': colorExpr(_currentTStr, _currentSource),
         'line-width': [
           'case',
           ['boolean', ['feature-state', 'hover'], false],
@@ -271,10 +274,20 @@ export function updateParcelThreshold(map, tStr) {
   _currentTStr = tStr;
   if (!map.getLayer('parcel-fill')) return null;
 
-  map.setFilter('parcel-fill', filterExpr(tStr));
-  map.setFilter('parcel-line', filterExpr(tStr));
-  map.setPaintProperty('parcel-fill', 'fill-color', colorExpr(tStr));
-  map.setPaintProperty('parcel-line', 'line-color', colorExpr(tStr));
+  map.setFilter('parcel-fill', filterExpr(tStr, _currentSource));
+  map.setFilter('parcel-line', filterExpr(tStr, _currentSource));
+  map.setPaintProperty('parcel-fill', 'fill-color', colorExpr(tStr, _currentSource));
+  map.setPaintProperty('parcel-line', 'line-color', colorExpr(tStr, _currentSource));
 
   return _metadata?.counts_by_threshold?.[tStr] || 0;
+}
+
+export function updateParcelSource(map, source) {
+  _currentSource = source;
+  if (!map.getLayer('parcel-fill')) return;
+
+  map.setFilter('parcel-fill', filterExpr(_currentTStr, source));
+  map.setFilter('parcel-line', filterExpr(_currentTStr, source));
+  map.setPaintProperty('parcel-fill', 'fill-color', colorExpr(_currentTStr, source));
+  map.setPaintProperty('parcel-line', 'line-color', colorExpr(_currentTStr, source));
 }

@@ -10,6 +10,7 @@ import { addDistrictLayer } from './lib/districts.js';
 import {
   addParcelLayer,
   updateParcelThreshold,
+  updateParcelSource,
   countParcels,
   hasDistrictField,
 } from './lib/parcels.js';
@@ -360,6 +361,7 @@ function buildLayerPanel() {
         radio.addEventListener('change', () => {
           vacancySource = opt.value;
           updateTileSource();
+          updateParcelSource(map, opt.value);
           updateSliderMute();
         });
 

@@ -5,17 +5,18 @@ import { CD_GEOJSON_URL, BRONX_CD_NAMES } from './layers.js';
  * Add Community District boundaries to a MapLibre map.
  * Returns controls for updating styles and responding to selection.
  */
-export async function addDistrictLayer(map, { onSelect, style: styleOverrides } = {}) {
-  const resp = await fetch(CD_GEOJSON_URL);
-  const geojson = await resp.json();
-
-  const bronxFeatures = {
+const _cdDataPromise = fetch(CD_GEOJSON_URL)
+  .then(r => r.json())
+  .then(geojson => ({
     type: 'FeatureCollection',
     features: geojson.features.filter(f => {
       const cd = f.properties.BoroCD;
       return cd >= 200 && cd < 300;
     }),
-  };
+  }));
+
+export async function addDistrictLayer(map, { onSelect, style: styleOverrides } = {}) {
+  const bronxFeatures = await _cdDataPromise;
 
   map.addSource('districts', {
     type: 'geojson',
@@ -178,10 +179,13 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
           (b, c) => b.extend(c),
           new maplibregl.LngLatBounds(coords[0], coords[0]),
         );
-        selectedId = id;
         const cam = map.cameraForBounds(bounds, { padding: 40 });
-        selectedZoom = cam ? cam.zoom : map.getZoom();
-        map.fitBounds(bounds, { padding: 40, duration: 600 });
+        const targetZoom = cam ? cam.zoom : map.getZoom();
+        selectedId = id;
+        selectedZoom = targetZoom;
+        if (map.getZoom() <= targetZoom) {
+          map.fitBounds(bounds, { padding: 40, duration: 600 });
+        }
       }
     }
 
