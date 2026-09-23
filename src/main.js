@@ -77,15 +77,6 @@ async function fetchImageryInfo(lng, lat, zoom) {
 // ── Stats ─────────────────────────────────────────
 const VACANT_TIP = 'Vacant lots found by model or recorded in MapPLUTO';
 
-// The park districts (226-228) are not real community districts and have no
-// profile page, so only the twelve numbered ones get an outbound link.
-function cdProfileUrl(boroCD) {
-  const cdNum = boroCD % 100;
-  return cdNum <= 12
-    ? `https://communityprofiles.planning.nyc.gov/bronx/${cdNum}`
-    : null;
-}
-
 function statRow(label, value, tip) {
   const row = document.createElement('div');
   row.className = 'stat-row';
@@ -115,7 +106,7 @@ function renderBronxStats() {
 
   const total = countParcels();
   el.append(statRow(
-    'Vacant Lots Found',
+    'Vacant lots',
     total === null ? '—' : total.toLocaleString(),
     VACANT_TIP,
   ));
@@ -132,37 +123,26 @@ function renderDistrictStats() {
   }
 
   const cdNum = selectedCD % 100;
+  const cdName = BRONX_CD_NAMES[selectedCD] || `District ${cdNum}`;
+
+  const heading = document.createElement('h3');
+  heading.className = 'stats-subtitle';
+  heading.textContent = cdName;
+  el.append(heading);
 
   const num = document.createElement('div');
-  num.className = 'cd-num';
+  num.className = 'cd-name';
   num.textContent = `Bronx CD ${cdNum}`;
   el.append(num);
 
-  const name = document.createElement('div');
-  name.className = 'cd-name';
-  name.textContent = BRONX_CD_NAMES[selectedCD] || `District ${cdNum}`;
-  el.append(name);
-
   if (hasDistrictField()) {
     el.append(statRow(
-      'Vacant Lots Found',
+      'Vacant lots',
       (countParcels({ cd: selectedCD }) ?? 0).toLocaleString(),
       VACANT_TIP,
     ));
   } else {
-    // parcels.geojson predates the cd field; regenerating it fills this in.
     el.append(note('Per-district counts need a regenerated parcels.geojson.'));
-  }
-
-  const url = cdProfileUrl(selectedCD);
-  if (url) {
-    const link = document.createElement('a');
-    link.className = 'cd-profile-link';
-    link.href = url;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    link.textContent = 'NYC Community Profile \u2197';
-    el.append(link);
   }
 }
 
