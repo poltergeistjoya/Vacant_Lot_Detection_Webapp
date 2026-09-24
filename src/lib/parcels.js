@@ -4,7 +4,7 @@ import { PARCELS_GEOJSON_URL } from './layers.js';
 const DEFAULT_COVERAGE = 0.20;
 
 const COLORS = {
-  both:       '#ef4444',
+  both:       '#22c55e',
   model_only: '#f97316',
   pluto_only: '#3b82f6',
 };
@@ -133,8 +133,8 @@ export async function addParcelLayer(map, initialTStr) {
         'line-width': [
           'case',
           ['boolean', ['feature-state', 'hover'], false],
-          2,
-          0.8,
+          3,
+          1.5,
         ],
         'line-opacity': 0.8,
       },

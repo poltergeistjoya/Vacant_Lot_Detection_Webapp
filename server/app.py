@@ -6,6 +6,7 @@ returns processed PNGs.
 """
 
 import asyncio
+import concurrent.futures
 import io
 import json
 import logging
@@ -674,6 +675,30 @@ def _aliases_to_color_params(
 
 _PRODUCT_CACHE_MAX = 1024
 _product_cache: OrderedDict[tuple, bytes] = OrderedDict()
+_composite_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+
+def _composite_tile_sync(tile_bytes, z, x, y, t, src, base_kwargs, outside_kwargs, nv_kwargs):
+    """CPU-heavy tile compositing. Runs in thread pool to keep the event loop free."""
+    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, source=src)
+    tile_u8 = tile_bytes_to_uint8(tile_bytes)
+
+    if vacant_mask is None:
+        return uint8_to_jpeg(apply_color_ops_fast(tile_u8, **outside_kwargs))
+
+    base_out = apply_color_ops_fast(tile_u8, **base_kwargs)
+    nv_out = apply_color_ops_fast(tile_u8, **nv_kwargs)
+
+    result = base_out
+    result[nonvacant_mask] = nv_out[nonvacant_mask]
+
+    boundary = vacant_mask | nonvacant_mask
+    outside_pixels = ~boundary
+    if outside_pixels.any():
+        outside_out = apply_color_ops_fast(tile_u8, **outside_kwargs)
+        result[outside_pixels] = outside_out[outside_pixels]
+
+    return uint8_to_jpeg(result)
 
 
 @app.get("/api/tile/product/{z}/{x}/{y}.jpg")
@@ -712,12 +737,14 @@ async def product_tile(
     """
     src = source if source in ("model", "pluto", "both") else "both"
 
+    loop = asyncio.get_running_loop()
+
     if mode != "playground":
         tile_path = f"product/{t}/{z}/{x}/{y}.jpg"
         if _gcs_bucket:
             blob = _gcs_bucket.blob(tile_path)
             try:
-                data = blob.download_as_bytes()
+                data = await loop.run_in_executor(None, blob.download_as_bytes)
                 logger.debug("tile_src=gcs %s", tile_path)
                 return Response(content=data, media_type="image/jpeg",
                                 headers={"Cache-Control": "public, max-age=86400"})
@@ -759,36 +786,13 @@ async def product_tile(
         outside_kwargs = PRODUCT_OUTSIDE
         nv_kwargs = PRODUCT_NV
 
-    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, source=src)
+    # Run CPU-heavy compositing in thread pool so z18 GCS responses aren't blocked
+    tile_out = await loop.run_in_executor(
+        _composite_pool,
+        _composite_tile_sync,
+        tile_bytes, z, x, y, t, src, base_kwargs, outside_kwargs, nv_kwargs,
+    )
 
-    tile_u8 = tile_bytes_to_uint8(tile_bytes)
-
-    # Tile fully outside study area — use outside treatment
-    if vacant_mask is None:
-        tile_out = uint8_to_jpeg(apply_color_ops_fast(tile_u8, **outside_kwargs))
-        if mode != "playground":
-            _product_cache[cache_key] = tile_out
-            _product_cache.move_to_end(cache_key)
-            while len(_product_cache) > _PRODUCT_CACHE_MAX:
-                _product_cache.popitem(last=False)
-        return Response(content=tile_out, media_type="image/jpeg",
-                        headers={"Cache-Control": "public, max-age=3600"})
-
-    # Base applied everywhere (vacant pixels keep this)
-    base_out = apply_color_ops_fast(tile_u8, **base_kwargs)
-    nv_out = apply_color_ops_fast(tile_u8, **nv_kwargs)
-
-    result = base_out
-    result[nonvacant_mask] = nv_out[nonvacant_mask]
-
-    # Outside boundary: pixels in this tile that aren't vacant or non-vacant
-    boundary = vacant_mask | nonvacant_mask
-    outside_pixels = ~boundary
-    if outside_pixels.any():
-        outside_out = apply_color_ops_fast(tile_u8, **outside_kwargs)
-        result[outside_pixels] = outside_out[outside_pixels]
-
-    tile_out = uint8_to_jpeg(result)
     if mode != "playground":
         _product_cache[cache_key] = tile_out
         _product_cache.move_to_end(cache_key)

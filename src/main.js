@@ -75,7 +75,7 @@ async function fetchImageryInfo(lng, lat, zoom) {
 }
 
 // ── Stats ─────────────────────────────────────────
-const VACANT_TIP = 'Vacant lots found by model or recorded in MapPLUTO';
+const VACANT_TIP = 'Lots flagged by model predictions or NYC PLUTO records';
 
 function statRow(label, value, tip) {
   const row = document.createElement('div');
@@ -108,7 +108,6 @@ function renderBronxStats() {
   el.append(statRow(
     'Vacant lots',
     total === null ? '—' : total.toLocaleString(),
-    VACANT_TIP,
   ));
 }
 
@@ -139,7 +138,6 @@ function renderDistrictStats() {
     el.append(statRow(
       'Vacant lots',
       (countParcels({ cd: selectedCD }) ?? 0).toLocaleString(),
-      VACANT_TIP,
     ));
   } else {
     el.append(note('Per-district counts need a regenerated parcels.geojson.'));
@@ -199,6 +197,12 @@ const map = window._map = new maplibregl.Map({
         tileSize: 256,
         attribution: ESRI_ATTRIBUTION,
       },
+      'product-cached': {
+        type: 'raster',
+        tiles: [`/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=both`],
+        tileSize: 256,
+        maxzoom: 18,
+      },
       product: {
         type: 'raster',
         tiles: [`/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=both`],
@@ -208,6 +212,7 @@ const map = window._map = new maplibregl.Map({
     },
     layers: [
       { id: 'basemap-layer', type: 'raster', source: 'basemap' },
+      { id: 'product-cached-layer', type: 'raster', source: 'product-cached' },
       { id: 'product-layer', type: 'raster', source: 'product' },
     ],
   },
@@ -267,6 +272,7 @@ function makeTooltipChip(text) {
 
   chip.addEventListener('click', (e) => {
     e.stopPropagation();
+    e.preventDefault();
     const isVisible = tipText.style.display === 'block';
     document.querySelectorAll('.tooltip-text').forEach(t => { t.style.display = 'none'; });
     if (!isVisible) {
@@ -288,7 +294,7 @@ document.addEventListener('click', () => {
 
 // ── Layer panel ─────────────────────────────────────
 const LAYERS = [
-  { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true,  tooltip: TOOLTIPS.overlay },
+  { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true },
   { id: 'cd',      label: 'Community Districts', defaultOn: true,  tooltip: TOOLTIPS.cd },
   { id: 'parcels',  label: 'Parcel Ownership',    defaultOn: false, tooltip: TOOLTIPS.parcels },
 ];
@@ -315,20 +321,24 @@ function buildLayerPanel() {
     label.htmlFor = cb.id;
     label.textContent = l.label;
 
-    const tip = makeTooltipChip(l.tooltip);
-
-    row.append(cb, label, tip);
+    if (l.tooltip) {
+      const tip = makeTooltipChip(l.tooltip);
+      row.append(cb, label, tip);
+    } else {
+      row.append(cb, label);
+    }
     panel.append(row);
 
     if (l.id === 'overlay') {
+      row.style.borderBottom = 'none';
       const sourceCtrl = document.createElement('div');
       sourceCtrl.id = 'vacancy-source-control';
       sourceCtrl.className = 'vacancy-source-control';
 
       const options = [
-        { value: 'both',  label: 'Model + PLUTO' },
-        { value: 'model', label: 'Model only' },
-        { value: 'pluto', label: 'PLUTO only' },
+        { value: 'both',  label: 'Model + PLUTO',          tooltip: TOOLTIPS.overlay_both },
+        { value: 'model', label: 'Model predicted vacancy', tooltip: TOOLTIPS.overlay_model },
+        { value: 'pluto', label: 'NYC tracked vacant lots', tooltip: TOOLTIPS.overlay_pluto },
       ];
       options.forEach(opt => {
         const optRow = document.createElement('label');
@@ -348,7 +358,8 @@ function buildLayerPanel() {
 
         const text = document.createElement('span');
         text.textContent = opt.label;
-        optRow.append(radio, text);
+        const tip = makeTooltipChip(opt.tooltip);
+        optRow.append(radio, text, tip);
         sourceCtrl.append(optRow);
       });
       panel.append(sourceCtrl);
@@ -362,7 +373,7 @@ function buildLayerPanel() {
       legend.style.paddingLeft = '24px';
 
       const items = [
-        { color: '#ef4444', label: 'Model + PLUTO agree' },
+        { color: '#22c55e', label: 'Model + PLUTO agree' },
         { color: '#f97316', label: 'Model predicted only' },
         { color: '#3b82f6', label: 'PLUTO recorded only' },
       ];
@@ -580,6 +591,8 @@ function prefetchPlutoTiles() {
     prefetchTilesAtZoom(zoom);
     if (zoom >= 16 && zoom <= 18) {
       prefetchTilesAtZoom(zoom + 1);
+    } else if (zoom === 19) {
+      prefetchTilesAtZoom(18);
     }
   }, 1000);
 }
