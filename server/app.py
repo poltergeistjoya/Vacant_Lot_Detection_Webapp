@@ -8,11 +8,15 @@ returns processed PNGs.
 import asyncio
 import io
 import json
+import logging
 import math
+import os
 import time
 from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import httpx
 import numpy as np
@@ -38,6 +42,20 @@ ESRI_URL = (
 )
 
 _client = httpx.AsyncClient(timeout=15.0, limits=httpx.Limits(max_connections=20))
+
+# ── Pre-rendered tile store ─────────────────────────
+# Set TILE_STORE_BUCKET to a GCS bucket name (e.g. vacant-lot-tiles)
+# or TILE_STORE_PATH to a local directory (e.g. data/tiles).
+# Tiles are expected at: product/{threshold}/{z}/{x}/{y}.jpg
+TILE_STORE_BUCKET = os.environ.get("TILE_STORE_BUCKET", "")
+TILE_STORE_PATH = os.environ.get("TILE_STORE_PATH", "")
+
+_gcs_bucket = None
+if TILE_STORE_BUCKET:
+    from google.cloud import storage as gcs
+    _gcs_bucket = gcs.Client().bucket(TILE_STORE_BUCKET)
+
+_tile_store_path = Path(TILE_STORE_PATH) if TILE_STORE_PATH else None
 
 
 async def _fetch_esri_raw(z: int, x: int, y: int) -> bytes:
@@ -695,6 +713,26 @@ async def product_tile(
     src = source if source in ("model", "pluto", "both") else "both"
 
     if mode != "playground":
+        tile_path = f"product/{t}/{z}/{x}/{y}.jpg"
+        if _gcs_bucket:
+            blob = _gcs_bucket.blob(tile_path)
+            try:
+                data = blob.download_as_bytes()
+                logger.debug("tile_src=gcs %s", tile_path)
+                return Response(content=data, media_type="image/jpeg",
+                                headers={"Cache-Control": "public, max-age=86400"})
+            except Exception:
+                logger.warning("tile_src=gcs_miss %s", tile_path)
+        elif _tile_store_path:
+            local_tile = _tile_store_path / tile_path
+            if local_tile.exists():
+                logger.debug("tile_src=local %s", tile_path)
+                return Response(content=local_tile.read_bytes(), media_type="image/jpeg",
+                                headers={"Cache-Control": "public, max-age=86400"})
+            else:
+                logger.warning("tile_src=local_miss %s", tile_path)
+
+        logger.warning("tile_src=live %s", tile_path)
         cache_key = (z, x, y, t, src)
         if cache_key in _product_cache:
             _product_cache.move_to_end(cache_key)

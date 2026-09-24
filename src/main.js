@@ -188,7 +188,7 @@ function updateFooter() {
 }
 
 // ── Map ─────────────────────────────────────────────
-const map = new maplibregl.Map({
+const map = window._map = new maplibregl.Map({
   container: 'map',
   style: {
     version: 8,
@@ -203,6 +203,7 @@ const map = new maplibregl.Map({
         type: 'raster',
         tiles: [`/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=both`],
         tileSize: 256,
+        maxzoom: 19,
       },
     },
     layers: [
@@ -549,32 +550,36 @@ function onThresholdChange(cp) {
 const _prefetched = new Set();
 let _prefetchDebounce = null;
 
+function prefetchTilesAtZoom(zoom) {
+  const bounds = map.getBounds();
+  const n = 2 ** zoom;
+  const toTileX = lng => Math.floor((lng + 180) / 360 * n);
+  const toTileY = lat => {
+    const r = lat * Math.PI / 180;
+    return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
+  };
+  const minX = toTileX(bounds.getWest());
+  const maxX = toTileX(bounds.getEast());
+  const minY = toTileY(bounds.getNorth());
+  const maxY = toTileY(bounds.getSouth());
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) {
+      const key = `${zoom}/${x}/${y}/${currentTStr}`;
+      if (_prefetched.has(key)) continue;
+      _prefetched.add(key);
+      fetch(`/api/tile/product/${zoom}/${x}/${y}.jpg?t=${currentTStr}&source=${vacancySource}`)
+        .catch(() => {});
+    }
+  }
+}
+
 function prefetchPlutoTiles() {
   clearTimeout(_prefetchDebounce);
   _prefetchDebounce = setTimeout(() => {
-    const bounds = map.getBounds();
     const zoom = Math.round(map.getZoom());
-    const n = 2 ** zoom;
-
-    const toTileX = lng => Math.floor((lng + 180) / 360 * n);
-    const toTileY = lat => {
-      const r = lat * Math.PI / 180;
-      return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
-    };
-
-    const minX = toTileX(bounds.getWest());
-    const maxX = toTileX(bounds.getEast());
-    const minY = toTileY(bounds.getNorth());
-    const maxY = toTileY(bounds.getSouth());
-
-    for (let x = minX; x <= maxX; x++) {
-      for (let y = minY; y <= maxY; y++) {
-        const key = `${zoom}/${x}/${y}/${currentTStr}`;
-        if (_prefetched.has(key)) continue;
-        _prefetched.add(key);
-        fetch(`/api/tile/product/${zoom}/${x}/${y}.jpg?t=${currentTStr}&source=${vacancySource}`)
-          .catch(() => {});
-      }
+    prefetchTilesAtZoom(zoom);
+    if (zoom >= 16 && zoom <= 18) {
+      prefetchTilesAtZoom(zoom + 1);
     }
   }, 1000);
 }
