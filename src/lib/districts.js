@@ -181,9 +181,10 @@ export async function addDistrictLayer(map, { onSelect, style: styleOverrides } 
         );
         const cam = map.cameraForBounds(bounds, { padding: 40 });
         const targetZoom = cam ? cam.zoom : map.getZoom();
+        const alreadySelected = selectedId === id;
         selectedId = id;
         selectedZoom = targetZoom;
-        if (map.getZoom() <= targetZoom) {
+        if (!alreadySelected || map.getZoom() <= targetZoom) {
           map.fitBounds(bounds, { padding: 40, duration: 600 });
         }
       }

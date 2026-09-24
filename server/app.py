@@ -881,11 +881,5 @@ def delete_snapshot_endpoint(name: str):
 # FastAPI serves the built dist/ so both run on the same port.
 _DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
 if _DIST_DIR.exists():
-    from starlette.responses import RedirectResponse
-
-    @app.get("/playground")
-    async def playground_redirect():
-        return RedirectResponse("/playground.html")
-
     app.mount("/", StaticFiles(directory=str(_DIST_DIR), html=True), name="static")
 

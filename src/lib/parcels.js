@@ -261,11 +261,21 @@ export function hasDistrictField() {
  */
 export function countParcels({ cd = null } = {}) {
   if (!_geojson) return null;
+  if (cd === null && _currentSource === 'both') {
+    return _metadata?.counts_by_threshold?.[_currentTStr] ?? 0;
+  }
   let n = 0;
   for (const f of _geojson.features) {
     const props = f.properties;
     if (cd !== null && Number(props.cd) !== Number(cd)) continue;
-    if (isVacantAt(props, _currentTStr)) n++;
+    if (_currentSource === 'model') {
+      if ((props[_currentTStr] || 0) < _coverageThreshold) continue;
+    } else if (_currentSource === 'pluto') {
+      if (!props.pluto_vacant) continue;
+    } else {
+      if (!isVacantAt(props, _currentTStr)) continue;
+    }
+    n++;
   }
   return n;
 }

@@ -17,6 +17,8 @@ gcloud run deploy "$SERVICE" \
   --region "$REGION" \
   --allow-unauthenticated \
   --port 8000 \
+  --memory 1Gi \
+  --min-instances 1 \
   --project "$PROJECT"
 
 echo "==> Done."
