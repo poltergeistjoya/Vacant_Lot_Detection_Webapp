@@ -19,13 +19,6 @@
       </svg>
       <span>Bronx Vacant Lot Detection</span>
     </div>
-    <a href="/playground" class="playground-link" title="Open Playground">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-      </svg>
-      <span>Playground</span>
-    </a>
   </header>
 
   <!-- Main content -->
@@ -33,30 +26,25 @@
     <!-- Sidebar -->
     <aside class="sidebar">
       <section class="sidebar-section">
-        <h3 class="sidebar-heading">Controls</h3>
         <div id="slider-container"></div>
         <div class="sidebar-sublabel">Layers</div>
         <div id="layer-panel"></div>
       </section>
 
       <section class="sidebar-section">
-        <h3 class="sidebar-heading">Stats</h3>
+        <h2 class="stats-title">Bronx</h2>
+        <div id="stat-bronx"></div>
 
-        <div class="stat-block">
-          <div class="sidebar-sublabel">Bronx</div>
-          <div id="stat-bronx"></div>
-        </div>
+        <hr class="stats-divider">
 
-        <div class="stat-block">
-          <div class="sidebar-sublabel">Selected District</div>
-          <div id="stat-cd"></div>
-        </div>
+        <div id="stat-cd"></div>
       </section>
 
     </aside>
 
     <!-- Map -->
     <div id="map"></div>
+    <div id="map-loading-bar" class="map-loading-bar" hidden></div>
   </div>
 
   <!-- Footer -->

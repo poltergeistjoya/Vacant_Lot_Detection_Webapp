@@ -25,7 +25,7 @@ function productTileUrl(threshold, bm, vc, nv) {
     }
   }
 
-  return `/api/tile/product/{z}/{x}/{y}.png?${params}`;
+  return `/api/tile/product/{z}/{x}/{y}.jpg?${params}`;
 }
 
 /**
@@ -98,7 +98,6 @@ export async function createMap(containerId) {
   let currentBm = {};
   let currentVc = {};
   let currentNv = {};
-
   function _rebuildTileSource() {
     const url = productTileUrl(currentThreshold, currentBm, currentVc, currentNv);
     if (map.getLayer('product')) map.removeLayer('product');

@@ -2,10 +2,12 @@
 set -euo pipefail
 
 PROJECT="vacant-lot-detection"
-REGION="us-central1"
+REGION="us-east4"
 REPO="vacant-lot"
 SERVICE="vacant-lot-app"
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPO/app"
+# GCS bucket for pre-rendered tiles (leave empty to use live compositing)
+TILE_STORE_BUCKET="vacant-lot-tiles"
 
 echo "==> Building image with Cloud Build..."
 gcloud builds submit --tag "$IMAGE" --project "$PROJECT"
@@ -17,6 +19,9 @@ gcloud run deploy "$SERVICE" \
   --region "$REGION" \
   --allow-unauthenticated \
   --port 8000 \
+  --memory 1Gi \
+  --min-instances 1 \
+  --set-env-vars "TILE_STORE_BUCKET=$TILE_STORE_BUCKET" \
   --project "$PROJECT"
 
 echo "==> Done."

@@ -1,11 +1,12 @@
-# Vacant Lot Overlay Playground
+# Bronx Vacant Lot Detection
 
-Local visual experimentation playground for the Bronx vacant-lot prediction mask.
-Esri World Imagery basemap with the vacancy mask used as a *clipping mask*,
-not a color fill: every effect is scoped to pixels where the mask == 1, and
-the real aerial imagery stays visible underneath, just locally adjusted. No
-thresholding happens here — the mask is treated as fixed, already-thresholded
-input.
+Interactive web map showing predicted vacant lots across the Bronx, built on
+U-Net (ResNet-34) segmentation of NAIP aerial imagery. Esri World Imagery
+basemap tiles are composited server-side with per-zone color treatments
+(basemap / vacant / non-vacant) so the real aerial photography stays visible
+under every effect.
+
+Live at **[app.joya.dev](https://app.joya.dev)**
 
 ## Quick Start
 
@@ -13,7 +14,7 @@ input.
 uv sync                              # install Python dependencies
 npm install                          # install JS dependencies
 
-# Config: copy template and fill in paths, or set the env var for worktree persistence
+# Config: copy template and fill in paths, or set the env var
 cp config.template.yaml config.local.yaml
 # OR: export GENERATE_MASKS_CONFIG=~/.config/generate_masks/config.local.yaml
 
@@ -27,7 +28,13 @@ npm run dev                               # Vite dev server on :5173
 
 Open http://localhost:5173 in your browser.
 
-## Docker (local)
+## Playground (local dev only)
+
+The color-tuning playground (`src/playground.html`) is available only during
+local development via `npm run dev`. It is **not** included in production
+Docker builds or deployed to Cloud Run.
+
+## Docker
 
 ```bash
 docker build -t vacant-lot-app .
@@ -42,7 +49,7 @@ One-time setup:
 
 ```bash
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
-gcloud artifacts repositories create vacant-lot --repository-format=docker --location=us-central1
+gcloud artifacts repositories create vacant-lot --repository-format=docker --location=us-east4
 ```
 
 Deploy:
@@ -52,7 +59,7 @@ Deploy:
 ```
 
 Custom domain: add a CNAME record at your registrar pointing to
-`ghs.googlehosted.com`, then create a Cloud Run domain mapping (see PR description for details).
+`ghs.googlehosted.com`, then create a Cloud Run domain mapping.
 
 ## Generating masks
 
@@ -76,29 +83,3 @@ Usage:
 
 The script only *reads* the source TIF — never modifies it. Outputs are
 gitignored; re-run whenever the source prediction changes.
-
-## Controls
-
-**Inside-area effects** — brightness, contrast, saturation, hue, blur —
-adjust the actual Esri imagery only where the mask is 1. This is done with
-a *second* copy of the Esri tile layer, filtered with CSS, and clipped with
-a CSS `mask-image` sized/positioned to the mask's geographic bounds. Outside
-the mask that layer is fully transparent, so the unfiltered base imagery
-underneath shows through untouched — nowhere does a flat color get painted
-over the imagery.
-
-**Boundary effects** — Outline, Glow, Shadow — are derived from the mask's
-edge and rendered as separate canvas layers:
-- *Outline*: a ring grown outward from the boundary by the given width, tinted
-  and shown at the given opacity.
-- *Glow* / *Shadow*: the full mask shape tinted (glow: chosen color; shadow:
-  black) at `strength` alpha, then CSS-blurred by `radius`. Because these
-  layers sit *underneath* the clipped inside-effects layer in z-order, the
-  portion of the blur that bleeds inward is hidden by it — only the outward
-  bleed past the boundary remains visible, which is what gives the "extends
-  slightly outside the prediction boundary" look without extra math.
-
-**Show Original** temporarily hides every effect (for comparison) without
-touching any control's value; toggling back restores exactly what was set.
-Reset restores all defaults. Every control updates the map immediately and
-is independently adjustable — combine as many effects as you like.

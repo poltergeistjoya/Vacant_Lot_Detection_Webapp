@@ -5,17 +5,24 @@ mask-based regional treatment (basemap / vacant / non-vacant), and
 returns processed PNGs.
 """
 
+import asyncio
+import concurrent.futures
 import io
 import json
+import logging
 import math
+import os
 import time
+from collections import OrderedDict
 from functools import lru_cache
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 import httpx
 import numpy as np
 from color_operations import sigmoidal, gamma, saturation
-from fastapi import Body, FastAPI, HTTPException, Query, Response
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -37,13 +44,60 @@ ESRI_URL = (
 
 _client = httpx.AsyncClient(timeout=15.0, limits=httpx.Limits(max_connections=20))
 
+# ── Pre-rendered tile store ─────────────────────────
+# Set TILE_STORE_BUCKET to a GCS bucket name (e.g. vacant-lot-tiles)
+# or TILE_STORE_PATH to a local directory (e.g. data/tiles).
+# Tiles are expected at: product/{threshold}/{z}/{x}/{y}.jpg
+TILE_STORE_BUCKET = os.environ.get("TILE_STORE_BUCKET", "")
+TILE_STORE_PATH = os.environ.get("TILE_STORE_PATH", "")
 
-async def fetch_esri_tile(z: int, x: int, y: int) -> bytes:
-    """Fetch a single Esri basemap tile."""
+_gcs_bucket = None
+if TILE_STORE_BUCKET:
+    from google.cloud import storage as gcs
+    _gcs_bucket = gcs.Client().bucket(TILE_STORE_BUCKET)
+
+_tile_store_path = Path(TILE_STORE_PATH) if TILE_STORE_PATH else None
+
+
+async def _fetch_esri_raw(z: int, x: int, y: int) -> bytes:
     url = ESRI_URL.format(z=z, y=y, x=x)
     resp = await _client.get(url)
     resp.raise_for_status()
     return resp.content
+
+
+_ESRI_CACHE_MAX = 512
+_esri_cache: OrderedDict[tuple, bytes] = OrderedDict()
+_esri_inflight: dict[tuple, asyncio.Future] = {}
+
+
+async def fetch_esri_tile(z: int, x: int, y: int) -> bytes:
+    """Fetch an Esri basemap tile, with in-memory LRU cache."""
+    key = (z, x, y)
+
+    if key in _esri_cache:
+        _esri_cache.move_to_end(key)
+        return _esri_cache[key]
+
+    if key in _esri_inflight:
+        return await _esri_inflight[key]
+
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future[bytes] = loop.create_future()
+    _esri_inflight[key] = fut
+    try:
+        data = await _fetch_esri_raw(z, x, y)
+        _esri_cache[key] = data
+        _esri_cache.move_to_end(key)
+        while len(_esri_cache) > _ESRI_CACHE_MAX:
+            _esri_cache.popitem(last=False)
+        fut.set_result(data)
+        return data
+    except Exception as e:
+        fut.set_exception(e)
+        raise
+    finally:
+        _esri_inflight.pop(key, None)
 
 
 # ── Color operations ─────────────────────────────────
@@ -113,6 +167,12 @@ def tile_bytes_to_array(tile_bytes: bytes) -> np.ndarray:
     return arr.transpose(2, 0, 1)  # (3, H, W)
 
 
+def tile_bytes_to_uint8(tile_bytes: bytes) -> np.ndarray:
+    """PNG/JPEG bytes → (H, W, 3) uint8 array."""
+    img = Image.open(io.BytesIO(tile_bytes)).convert("RGB")
+    return np.array(img, dtype=np.uint8)
+
+
 def array_to_png(arr: np.ndarray) -> bytes:
     """(3, H, W) float64 array → PNG bytes."""
     img_arr = (arr.transpose(1, 2, 0) * 255).astype(np.uint8)  # (H, W, 3)
@@ -122,6 +182,136 @@ def array_to_png(arr: np.ndarray) -> bytes:
     return buf.getvalue()
 
 
+def uint8_to_png(arr: np.ndarray) -> bytes:
+    """(H, W, 3) uint8 array → PNG bytes."""
+    img = Image.fromarray(arr, "RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=False)
+    return buf.getvalue()
+
+
+def uint8_to_jpeg(arr: np.ndarray, quality: int = 85) -> bytes:
+    """(H, W, 3) uint8 array → JPEG bytes."""
+    img = Image.fromarray(arr, "RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
+
+
+# ── LUT-based fast color ops ─────────────────────────
+
+def _build_channel_lut(sig_contrast=0, sig_bias=0.5, gam_master=1, gam=1,
+                       brightness=1, grayscale=0):
+    """Build a 256-entry uint8 LUT for one channel's non-mixing ops."""
+    vals = np.linspace(0, 1, 256).reshape(1, 1, 256)
+    if sig_contrast > 0:
+        vals = sigmoidal(vals, sig_contrast, sig_bias)
+    if gam != 1.0:
+        vals = gamma(vals, gam)
+    if gam_master != 1.0:
+        vals = gamma(vals, gam_master)
+    if brightness != 1.0:
+        vals = np.clip(vals * brightness, 0, 1)
+    return (vals[0, 0] * 255 + 0.5).astype(np.uint8)
+
+
+def _build_luts(sig_contrast=0, sig_bias=0.5, gam_master=1,
+                gam_r=1, gam_g=1, gam_b=1, brightness=1, **_kw):
+    """Build per-channel LUTs for sigmoidal + gamma + brightness."""
+    common = dict(sig_contrast=sig_contrast, sig_bias=sig_bias,
+                  gam_master=gam_master, brightness=brightness)
+    return (
+        _build_channel_lut(gam=gam_r, **common),
+        _build_channel_lut(gam=gam_g, **common),
+        _build_channel_lut(gam=gam_b, **common),
+    )
+
+
+def _apply_luts(tile_u8, lut_r, lut_g, lut_b):
+    """Apply per-channel LUTs to (H, W, 3) uint8 array. Returns (H, W, 3) uint8."""
+    out = np.empty_like(tile_u8)
+    out[:, :, 0] = lut_r[tile_u8[:, :, 0]]
+    out[:, :, 1] = lut_g[tile_u8[:, :, 1]]
+    out[:, :, 2] = lut_b[tile_u8[:, :, 2]]
+    return out
+
+
+def _sat_oklch(arr_u8, proportion):
+    """Oklch saturation on (H, W, 3) uint8. Returns (H, W, 3) uint8."""
+    f = arr_u8.astype(np.float32) / 255.0
+    r, g, b = f[:, :, 0], f[:, :, 1], f[:, :, 2]
+
+    l = 0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b
+    m = 0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b
+    s = 0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b
+
+    l_ = np.cbrt(l)
+    m_ = np.cbrt(m)
+    s_ = np.cbrt(s)
+
+    L = 0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_
+    A = 1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_
+    B = 0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_
+
+    A *= proportion
+    B *= proportion
+
+    l_ = L + 0.3963377774 * A + 0.2158037573 * B
+    m_ = L - 0.1055613458 * A - 0.0638541728 * B
+    s_ = L - 0.0894841775 * A - 1.2914855480 * B
+
+    l = l_ * l_ * l_
+    m = m_ * m_ * m_
+    s = s_ * s_ * s_
+
+    ro = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s
+    go = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s
+    bo = -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s
+
+    out = np.stack([ro, go, bo], axis=-1)
+    return np.clip(out * 255, 0, 255).astype(np.uint8)
+
+
+def _grayscale_u8(arr_u8, amount):
+    """Apply grayscale blend to (H, W, 3) uint8. Returns (H, W, 3) uint8."""
+    f = arr_u8.astype(np.float32)
+    lum = (0.2126 * f[:, :, 0] + 0.7152 * f[:, :, 1] + 0.0722 * f[:, :, 2])
+    result = f * (1 - amount) + lum[:, :, np.newaxis] * amount
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+
+def _tint_u8(arr_u8, tint_r, tint_g, tint_b, opacity):
+    """Apply tint overlay to (H, W, 3) uint8. Returns (H, W, 3) uint8."""
+    f = arr_u8.astype(np.float32)
+    tint = np.array([tint_r, tint_g, tint_b], dtype=np.float32)
+    result = f * (1 - opacity) + tint * opacity
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+
+def apply_color_ops_fast(tile_u8, **kwargs):
+    """Fast LUT-based color ops on (H, W, 3) uint8. Returns (H, W, 3) uint8.
+
+    Uses Oklch color space for saturation.
+    """
+    lut_r, lut_g, lut_b = _build_luts(**kwargs)
+    out = _apply_luts(tile_u8, lut_r, lut_g, lut_b)
+
+    sat_val = kwargs.get("sat", 1.0)
+    if sat_val != 1.0:
+        out = _sat_oklch(out, sat_val)
+
+    gs = kwargs.get("grayscale", 0)
+    if gs > 0:
+        out = _grayscale_u8(out, gs)
+
+    tint_opacity = kwargs.get("tint_opacity", 0)
+    if tint_opacity > 0:
+        out = _tint_u8(out, kwargs.get("tint_r", 0),
+                       kwargs.get("tint_g", 0), kwargs.get("tint_b", 0), tint_opacity)
+
+    return out
+
+
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -129,8 +319,8 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # Treatment values loaded from data/product_treatment.json.
 
 _treatment = json.loads((DATA_DIR / "product_treatment.json").read_text())
-PRODUCT_BM = _treatment["basemap"]
-PRODUCT_VC = _treatment["vacant"]
+PRODUCT_BASE = _treatment["base"]
+PRODUCT_OUTSIDE = _treatment.get("outside", {})
 PRODUCT_NV = _treatment["nonvacant"]
 
 MASKS_DIR = DATA_DIR / "masks"
@@ -483,8 +673,37 @@ def _aliases_to_color_params(
     )
 
 
-@app.get("/api/tile/product/{z}/{x}/{y}.png")
+_PRODUCT_CACHE_MAX = 1024
+_product_cache: OrderedDict[tuple, bytes] = OrderedDict()
+_composite_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+
+def _composite_tile_sync(tile_bytes, z, x, y, t, src, base_kwargs, outside_kwargs, nv_kwargs):
+    """CPU-heavy tile compositing. Runs in thread pool to keep the event loop free."""
+    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, source=src)
+    tile_u8 = tile_bytes_to_uint8(tile_bytes)
+
+    if vacant_mask is None:
+        return uint8_to_jpeg(apply_color_ops_fast(tile_u8, **outside_kwargs))
+
+    base_out = apply_color_ops_fast(tile_u8, **base_kwargs)
+    nv_out = apply_color_ops_fast(tile_u8, **nv_kwargs)
+
+    result = base_out
+    result[nonvacant_mask] = nv_out[nonvacant_mask]
+
+    boundary = vacant_mask | nonvacant_mask
+    outside_pixels = ~boundary
+    if outside_pixels.any():
+        outside_out = apply_color_ops_fast(tile_u8, **outside_kwargs)
+        result[outside_pixels] = outside_out[outside_pixels]
+
+    return uint8_to_jpeg(result)
+
+
+@app.get("/api/tile/product/{z}/{x}/{y}.jpg")
 async def product_tile(
+    request: Request,
     z: int, x: int, y: int,
     t: str = Query("t0298"),
     source: str = Query("both"),
@@ -509,20 +728,60 @@ async def product_tile(
     nv_sat: float = Query(1), nv_gray: float = Query(0),
     nv_br: float = Query(1),
 ):
-    """Return a composited tile with basemap/vacant/non-vacant treatments.
+    """Return a composited tile with base/outside/non-vacant treatments.
 
-    Without mode=playground, uses the baked-in treatments from product_treatment.json.
-    With mode=playground, uses the query-string treatment params (identity defaults).
+    Zones: base (whole tile, vacant pixels keep this), non-vacant (mask override),
+    outside boundary (mask override for pixels outside the study area).
+
+    bm_* = base treatment, vc_* = outside boundary treatment, nv_* = non-vacant.
+    Without mode=playground, uses baked-in treatments from product_treatment.json.
     """
+    src = source if source in ("model", "pluto", "both") else "both"
+
+    loop = asyncio.get_running_loop()
+
+    if mode != "playground":
+        tile_path = f"product/{t}/{z}/{x}/{y}.jpg"
+        if _gcs_bucket:
+            blob = _gcs_bucket.blob(tile_path)
+            try:
+                data = await loop.run_in_executor(None, blob.download_as_bytes)
+                logger.debug("tile_src=gcs %s", tile_path)
+                return Response(content=data, media_type="image/jpeg",
+                                headers={"Cache-Control": "public, max-age=86400"})
+            except Exception:
+                logger.warning("tile_src=gcs_miss %s", tile_path)
+        elif _tile_store_path:
+            local_tile = _tile_store_path / tile_path
+            if local_tile.exists():
+                logger.debug("tile_src=local %s", tile_path)
+                return Response(content=local_tile.read_bytes(), media_type="image/jpeg",
+                                headers={"Cache-Control": "public, max-age=86400"})
+            else:
+                logger.warning("tile_src=local_miss %s", tile_path)
+
+        logger.warning("tile_src=live %s", tile_path)
+        cache_key = (z, x, y, t, src)
+        if cache_key in _product_cache:
+            _product_cache.move_to_end(cache_key)
+            return Response(content=_product_cache[cache_key], media_type="image/jpeg",
+                            headers={"Cache-Control": "public, max-age=3600"})
+
+    # Skip work if the client already disconnected (e.g. tile scrolled out of view)
+    if await request.is_disconnected():
+        return Response(status_code=499)
+
     tile_bytes = await fetch_esri_tile(z, x, y)
-    arr = tile_bytes_to_array(tile_bytes)
+
+    if await request.is_disconnected():
+        return Response(status_code=499)
 
     if mode == "playground":
-        bm_kwargs = _aliases_to_color_params(
+        base_kwargs = _aliases_to_color_params(
             sc=bm_sc, sb=bm_sb, g=bm_g, gr=bm_gr, gg=bm_gg, gb=bm_gb,
             sat=bm_sat, gray=bm_gray, br=bm_br,
         )
-        vc_kwargs = _aliases_to_color_params(
+        outside_kwargs = _aliases_to_color_params(
             sc=vc_sc, sb=vc_sb, g=vc_g, gr=vc_gr, gg=vc_gg, gb=vc_gb,
             sat=vc_sat, gray=vc_gray, br=vc_br, tint=vc_tint, to=vc_to,
         )
@@ -531,29 +790,26 @@ async def product_tile(
             sat=nv_sat, gray=nv_gray, br=nv_br,
         )
     else:
-        bm_kwargs = PRODUCT_BM
-        vc_kwargs = PRODUCT_VC
+        base_kwargs = PRODUCT_BASE
+        outside_kwargs = PRODUCT_OUTSIDE
         nv_kwargs = PRODUCT_NV
 
-    src = source if source in ("model", "pluto", "both") else "both"
-    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, source=src)
+    # Run CPU-heavy compositing in thread pool so z18 GCS responses aren't blocked
+    tile_out = await loop.run_in_executor(
+        _composite_pool,
+        _composite_tile_sync,
+        tile_bytes, z, x, y, t, src, base_kwargs, outside_kwargs, nv_kwargs,
+    )
 
-    if vacant_mask is None:
-        result = apply_color_ops(arr, **bm_kwargs)
-        return Response(content=array_to_png(result), media_type="image/png",
-                        headers={"Cache-Control": "public, max-age=3600"})
+    if mode != "playground":
+        _product_cache[cache_key] = tile_out
+        _product_cache.move_to_end(cache_key)
+        while len(_product_cache) > _PRODUCT_CACHE_MAX:
+            _product_cache.popitem(last=False)
 
-    bm_arr = apply_color_ops(arr.copy(), **bm_kwargs)
-    vc_arr = apply_color_ops(arr.copy(), **vc_kwargs)
-    nv_arr = apply_color_ops(arr.copy(), **nv_kwargs)
-
-    result = bm_arr
-    result[:, nonvacant_mask] = nv_arr[:, nonvacant_mask]
-    result[:, vacant_mask] = vc_arr[:, vacant_mask]
-
-    cache = "no-cache" if mode == "playground" else "public, max-age=3600"
-    return Response(content=array_to_png(result), media_type="image/png",
-                    headers={"Cache-Control": cache})
+    cache_header = "no-cache" if mode == "playground" else "public, max-age=3600"
+    return Response(content=tile_out, media_type="image/jpeg",
+                    headers={"Cache-Control": cache_header})
 
 
 def _color_params_to_aliases(params: dict) -> dict:
@@ -569,26 +825,26 @@ def _color_params_to_aliases(params: dict) -> dict:
 _STATIC_PRESETS = {
     "planning_view": {
         "label": "Planning View",
-        "basemap": {"gray": 0.8, "br": 0.9},
-        "vacant": {"br": 1.3, "sat": 1.4},
+        "base": {"br": 1.3, "sat": 1.4},
+        "outside": {"gray": 0.8, "br": 0.9},
         "nonvacant": {"gray": 1.0, "br": 0.7},
     },
     "high_contrast": {
         "label": "High Contrast",
-        "basemap": {"sc": 15, "sb": 0.5},
-        "vacant": {"sc": 20, "sb": 0.4, "sat": 1.5},
+        "base": {"sc": 20, "sb": 0.4, "sat": 1.5},
+        "outside": {"sc": 15, "sb": 0.5},
         "nonvacant": {"sc": 10, "sb": 0.6, "gray": 0.5},
     },
     "satellite_clean": {
         "label": "Satellite Clean",
-        "basemap": {"sc": 8, "sb": 0.45, "sat": 1.2, "g": 0.9},
-        "vacant": {},
+        "base": {"sc": 8, "sb": 0.45, "sat": 1.2, "g": 0.9},
+        "outside": {},
         "nonvacant": {},
     },
     "dark_mode": {
         "label": "Dark Mode",
-        "basemap": {"br": 0.4, "sc": 5, "sb": 0.3},
-        "vacant": {"br": 0.8, "tint": "1a1a2e", "to": 0.3},
+        "base": {"br": 0.8, "tint": "1a1a2e", "to": 0.3},
+        "outside": {"br": 0.4, "sc": 5, "sb": 0.3},
         "nonvacant": {"br": 0.3, "gray": 0.6},
     },
 }
@@ -601,8 +857,8 @@ def list_presets():
     presets = {
         "production": {
             "label": "Production (" + treatment.get("name", "default") + ")",
-            "basemap": _color_params_to_aliases(treatment.get("basemap", {})),
-            "vacant": _color_params_to_aliases(treatment.get("vacant", {})),
+            "base": _color_params_to_aliases(treatment.get("base", {})),
+            "outside": _color_params_to_aliases(treatment.get("outside", {})),
             "nonvacant": _color_params_to_aliases(treatment.get("nonvacant", {})),
             "cd": treatment.get("cd", {}),
         },

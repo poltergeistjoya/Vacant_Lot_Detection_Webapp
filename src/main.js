@@ -10,6 +10,7 @@ import { addDistrictLayer } from './lib/districts.js';
 import {
   addParcelLayer,
   updateParcelThreshold,
+  updateParcelSource,
   countParcels,
   hasDistrictField,
 } from './lib/parcels.js';
@@ -74,16 +75,7 @@ async function fetchImageryInfo(lng, lat, zoom) {
 }
 
 // ── Stats ─────────────────────────────────────────
-const VACANT_TIP = 'Vacant lots found by model or recorded in MapPLUTO';
-
-// The park districts (226-228) are not real community districts and have no
-// profile page, so only the twelve numbered ones get an outbound link.
-function cdProfileUrl(boroCD) {
-  const cdNum = boroCD % 100;
-  return cdNum <= 12
-    ? `https://communityprofiles.planning.nyc.gov/bronx/${cdNum}`
-    : null;
-}
+const VACANT_TIP = 'Lots flagged by model predictions or NYC PLUTO records';
 
 function statRow(label, value, tip) {
   const row = document.createElement('div');
@@ -114,9 +106,8 @@ function renderBronxStats() {
 
   const total = countParcels();
   el.append(statRow(
-    'Vacant Lots Found',
+    'Vacant lots',
     total === null ? '—' : total.toLocaleString(),
-    VACANT_TIP,
   ));
 }
 
@@ -131,37 +122,25 @@ function renderDistrictStats() {
   }
 
   const cdNum = selectedCD % 100;
+  const cdName = BRONX_CD_NAMES[selectedCD] || `District ${cdNum}`;
+
+  const heading = document.createElement('h3');
+  heading.className = 'stats-subtitle';
+  heading.textContent = cdName;
+  el.append(heading);
 
   const num = document.createElement('div');
-  num.className = 'cd-num';
+  num.className = 'cd-name';
   num.textContent = `Bronx CD ${cdNum}`;
   el.append(num);
 
-  const name = document.createElement('div');
-  name.className = 'cd-name';
-  name.textContent = BRONX_CD_NAMES[selectedCD] || `District ${cdNum}`;
-  el.append(name);
-
   if (hasDistrictField()) {
     el.append(statRow(
-      'Vacant Lots Found',
+      'Vacant lots',
       (countParcels({ cd: selectedCD }) ?? 0).toLocaleString(),
-      VACANT_TIP,
     ));
   } else {
-    // parcels.geojson predates the cd field; regenerating it fills this in.
     el.append(note('Per-district counts need a regenerated parcels.geojson.'));
-  }
-
-  const url = cdProfileUrl(selectedCD);
-  if (url) {
-    const link = document.createElement('a');
-    link.className = 'cd-profile-link';
-    link.href = url;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    link.textContent = 'NYC Community Profile \u2197';
-    el.append(link);
   }
 }
 
@@ -207,7 +186,7 @@ function updateFooter() {
 }
 
 // ── Map ─────────────────────────────────────────────
-const map = new maplibregl.Map({
+const map = window._map = new maplibregl.Map({
   container: 'map',
   style: {
     version: 8,
@@ -218,14 +197,22 @@ const map = new maplibregl.Map({
         tileSize: 256,
         attribution: ESRI_ATTRIBUTION,
       },
+      'product-cached': {
+        type: 'raster',
+        tiles: [`/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=both`],
+        tileSize: 256,
+        maxzoom: 18,
+      },
       product: {
         type: 'raster',
-        tiles: [`/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}&source=both`],
+        tiles: [`/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=both`],
         tileSize: 256,
+        maxzoom: 19,
       },
     },
     layers: [
       { id: 'basemap-layer', type: 'raster', source: 'basemap' },
+      { id: 'product-cached-layer', type: 'raster', source: 'product-cached' },
       { id: 'product-layer', type: 'raster', source: 'product' },
     ],
   },
@@ -238,13 +225,23 @@ const map = new maplibregl.Map({
 
 map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
+// ── Loading bar ──────────────────────────────────
+const loadingBar = document.getElementById('map-loading-bar');
+map.on('dataloading', (e) => {
+  if (e.dataType === 'source' && loadingBar) loadingBar.hidden = false;
+});
+map.on('idle', () => {
+  if (loadingBar) loadingBar.hidden = true;
+});
+
 // ── Tile URL logic ─────────────────────────────────
 function updateTileSource() {
   if (layerState.naip) {
     map.getSource('product')?.setTiles([NAIP_TILE_URL]);
     return;
   }
-  const url = `/api/tile/product/{z}/{x}/{y}.png?t=${currentTStr}&source=${vacancySource}`;
+  const tStr = layerState.overlay ? currentTStr : 't0000';
+  const url = `/api/tile/product/{z}/{x}/{y}.jpg?t=${tStr}&source=${vacancySource}`;
   map.getSource('product')?.setTiles([url]);
 }
 
@@ -274,23 +271,31 @@ function makeTooltipChip(text) {
   tipText.textContent = text;
   chip.append(tipText);
 
-  chip.addEventListener('mouseenter', () => {
-    const r = chip.getBoundingClientRect();
-    const sidebar = document.querySelector('.sidebar');
-    const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
-    tipText.style.top = `${r.top}px`;
-    tipText.style.left = `${sidebarRight + 8}px`;
-    tipText.style.display = 'block';
+  chip.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const isVisible = tipText.style.display === 'block';
+    document.querySelectorAll('.tooltip-text').forEach(t => { t.style.display = 'none'; });
+    if (!isVisible) {
+      const r = chip.getBoundingClientRect();
+      const sidebar = document.querySelector('.sidebar');
+      const sidebarRight = sidebar ? sidebar.getBoundingClientRect().right : r.right;
+      tipText.style.top = `${r.top}px`;
+      tipText.style.left = `${sidebarRight + 8}px`;
+      tipText.style.display = 'block';
+    }
   });
-  chip.addEventListener('mouseleave', () => { tipText.style.display = 'none'; });
 
   return chip;
 }
 
+document.addEventListener('click', () => {
+  document.querySelectorAll('.tooltip-text').forEach(t => { t.style.display = 'none'; });
+});
+
 // ── Layer panel ─────────────────────────────────────
 const LAYERS = [
-  { id: 'naip',    label: 'NAIP Imagery',       defaultOn: false, tooltip: TOOLTIPS.naip },
-  { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true,  tooltip: TOOLTIPS.overlay },
+  { id: 'overlay', label: 'Vacant Overlay',      defaultOn: true },
   { id: 'cd',      label: 'Community Districts', defaultOn: true,  tooltip: TOOLTIPS.cd },
   { id: 'parcels',  label: 'Parcel Ownership',    defaultOn: false, tooltip: TOOLTIPS.parcels },
 ];
@@ -317,20 +322,24 @@ function buildLayerPanel() {
     label.htmlFor = cb.id;
     label.textContent = l.label;
 
-    const tip = makeTooltipChip(l.tooltip);
-
-    row.append(cb, label, tip);
+    if (l.tooltip) {
+      const tip = makeTooltipChip(l.tooltip);
+      row.append(cb, label, tip);
+    } else {
+      row.append(cb, label);
+    }
     panel.append(row);
 
     if (l.id === 'overlay') {
+      row.style.borderBottom = 'none';
       const sourceCtrl = document.createElement('div');
       sourceCtrl.id = 'vacancy-source-control';
       sourceCtrl.className = 'vacancy-source-control';
 
       const options = [
-        { value: 'both',  label: 'Model + PLUTO' },
-        { value: 'model', label: 'Model only' },
-        { value: 'pluto', label: 'PLUTO only' },
+        { value: 'both',  label: 'Model + PLUTO',          tooltip: TOOLTIPS.overlay_both },
+        { value: 'model', label: 'Model predicted vacancy', tooltip: TOOLTIPS.overlay_model },
+        { value: 'pluto', label: 'NYC tracked vacant lots', tooltip: TOOLTIPS.overlay_pluto },
       ];
       options.forEach(opt => {
         const optRow = document.createElement('label');
@@ -344,12 +353,14 @@ function buildLayerPanel() {
         radio.addEventListener('change', () => {
           vacancySource = opt.value;
           updateTileSource();
+          updateParcelSource(map, opt.value);
           updateSliderMute();
         });
 
         const text = document.createElement('span');
         text.textContent = opt.label;
-        optRow.append(radio, text);
+        const tip = makeTooltipChip(opt.tooltip);
+        optRow.append(radio, text, tip);
         sourceCtrl.append(optRow);
       });
       panel.append(sourceCtrl);
@@ -363,7 +374,7 @@ function buildLayerPanel() {
       legend.style.paddingLeft = '24px';
 
       const items = [
-        { color: '#ef4444', label: 'Model + PLUTO agree' },
+        { color: '#22c55e', label: 'Model + PLUTO agree' },
         { color: '#f97316', label: 'Model predicted only' },
         { color: '#3b82f6', label: 'PLUTO recorded only' },
       ];
@@ -383,16 +394,20 @@ function buildLayerPanel() {
         legend.append(item);
       });
 
+      panel.append(legend);
+
       const peekBtn = document.createElement('button');
       peekBtn.id = 'peek-btn';
       peekBtn.className = 'peek-btn';
-      peekBtn.textContent = 'Peek (hold V)';
-      peekBtn.addEventListener('mousedown', () => setPeek(true));
+      peekBtn.disabled = true;
+      peekBtn.textContent = 'Peek (hold)';
+      peekBtn.addEventListener('mousedown', () => { if (!peekBtn.disabled) setPeek(true); });
       peekBtn.addEventListener('mouseup', () => setPeek(false));
       peekBtn.addEventListener('mouseleave', () => setPeek(false));
-      legend.append(peekBtn);
-
-      panel.append(legend);
+      peekBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if (!peekBtn.disabled) setPeek(true); });
+      peekBtn.addEventListener('touchend', () => setPeek(false));
+      peekBtn.addEventListener('touchcancel', () => setPeek(false));
+      panel.append(peekBtn);
     }
 
     if (l.id === 'athletic') {
@@ -486,15 +501,17 @@ function updateSliderMute() {
 function toggleLayer(id, visible) {
   if (id === 'overlay') {
     layerState.overlay = visible;
-    map.setLayoutProperty('product-layer', 'visibility', visible ? 'visible' : 'none');
     const sourceCtrl = document.getElementById('vacancy-source-control');
-    if (sourceCtrl) sourceCtrl.hidden = !visible;
+    if (sourceCtrl) {
+      sourceCtrl.querySelectorAll('input[type=radio]').forEach(r => { r.disabled = !visible; });
+      sourceCtrl.classList.toggle('source-disabled', !visible);
+    }
+    updateTileSource();
     updateFooter();
   } else if (id === 'naip') {
     layerState.naip = visible;
     map.getSource('basemap')?.setTiles([visible ? NAIP_TILE_URL : ESRI_BASEMAP_URL]);
-    map.setLayoutProperty('product-layer', 'visibility',
-      (!visible && layerState.overlay) ? 'visible' : 'none');
+    map.setLayoutProperty('product-layer', 'visibility', visible ? 'none' : 'visible');
     updateFooter();
   } else if (id === 'cd') {
     const vis = visible ? 'visible' : 'none';
@@ -507,6 +524,8 @@ function toggleLayer(id, visible) {
     if (map.getLayer('parcel-line')) map.setLayoutProperty('parcel-line', 'visibility', vis);
     const legend = document.getElementById('parcel-legend');
     if (legend) legend.hidden = !visible;
+    const peekBtn = document.getElementById('peek-btn');
+    if (peekBtn) peekBtn.disabled = !visible;
     if (!visible && _peeking) setPeek(false);
     updateFooter();
   } else if (id === 'athletic') {
@@ -548,35 +567,40 @@ function onThresholdChange(cp) {
 const _prefetched = new Set();
 let _prefetchDebounce = null;
 
+function prefetchTilesAtZoom(zoom) {
+  const bounds = map.getBounds();
+  const n = 2 ** zoom;
+  const toTileX = lng => Math.floor((lng + 180) / 360 * n);
+  const toTileY = lat => {
+    const r = lat * Math.PI / 180;
+    return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
+  };
+  const minX = toTileX(bounds.getWest());
+  const maxX = toTileX(bounds.getEast());
+  const minY = toTileY(bounds.getNorth());
+  const maxY = toTileY(bounds.getSouth());
+  for (let x = minX; x <= maxX; x++) {
+    for (let y = minY; y <= maxY; y++) {
+      const key = `${zoom}/${x}/${y}/${currentTStr}`;
+      if (_prefetched.has(key)) continue;
+      _prefetched.add(key);
+      fetch(`/api/tile/product/${zoom}/${x}/${y}.jpg?t=${currentTStr}&source=${vacancySource}`)
+        .catch(() => {});
+    }
+  }
+}
+
 function prefetchPlutoTiles() {
   clearTimeout(_prefetchDebounce);
   _prefetchDebounce = setTimeout(() => {
-    const bounds = map.getBounds();
     const zoom = Math.round(map.getZoom());
-    const n = 2 ** zoom;
-
-    const toTileX = lng => Math.floor((lng + 180) / 360 * n);
-    const toTileY = lat => {
-      const r = lat * Math.PI / 180;
-      return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
-    };
-
-    const minX = toTileX(bounds.getWest());
-    const maxX = toTileX(bounds.getEast());
-    const minY = toTileY(bounds.getNorth());
-    const maxY = toTileY(bounds.getSouth());
-
-    for (let x = minX; x <= maxX; x++) {
-      for (let y = minY; y <= maxY; y++) {
-        const key = `${zoom}/${x}/${y}/${currentTStr}`;
-        if (_prefetched.has(key)) continue;
-        _prefetched.add(key);
-        fetch(`/api/tile/product/${zoom}/${x}/${y}.png?t=${currentTStr}&source=${vacancySource}`)
-          .catch(() => {});
-      }
+    prefetchTilesAtZoom(zoom);
+    if (zoom >= 16 && zoom <= 18) {
+      prefetchTilesAtZoom(zoom + 1);
+    } else if (zoom === 19) {
+      prefetchTilesAtZoom(18);
     }
   }, 1000);
-}
 }
 
 // ── Imagery metadata ───────────────────────────────

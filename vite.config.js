@@ -40,7 +40,6 @@ export default {
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, 'src/index.html'),
-        playground: path.resolve(__dirname, 'src/playground.html'),
       },
     },
   },

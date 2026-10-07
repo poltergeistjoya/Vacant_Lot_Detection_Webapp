@@ -4,27 +4,30 @@ import { PARCELS_GEOJSON_URL } from './layers.js';
 const DEFAULT_COVERAGE = 0.20;
 
 const COLORS = {
-  both:       '#ef4444',
+  both:       '#22c55e',
   model_only: '#f97316',
   pluto_only: '#3b82f6',
 };
 
 let _currentTStr = 't0298';
+let _currentSource = 'both';
 let _metadata = null;
 let _coverageThreshold = DEFAULT_COVERAGE;
 let _geojson = null;
 
-function filterExpr(tStr) {
-  return [
-    'any',
-    ['==', ['get', 'pluto_vacant'], true],
-    ['>=', ['get', tStr], _coverageThreshold],
-  ];
-}
-
-function colorExpr(tStr) {
+function filterExpr(tStr, source) {
   const isModel = ['>=', ['get', tStr], _coverageThreshold];
   const isPluto = ['==', ['get', 'pluto_vacant'], true];
+  if (source === 'model') return isModel;
+  if (source === 'pluto') return isPluto;
+  return ['any', isPluto, isModel];
+}
+
+function colorExpr(tStr, source) {
+  const isModel = ['>=', ['get', tStr], _coverageThreshold];
+  const isPluto = ['==', ['get', 'pluto_vacant'], true];
+  if (source === 'model') return COLORS.model_only;
+  if (source === 'pluto') return COLORS.pluto_only;
   return [
     'case',
     ['all', isPluto, isModel], COLORS.both,
@@ -101,11 +104,10 @@ export async function addParcelLayer(map, initialTStr) {
       id: 'parcel-fill',
       type: 'fill',
       source: 'parcels',
-      minzoom: 14,
       layout: { visibility: 'none' },
-      filter: filterExpr(_currentTStr),
+      filter: filterExpr(_currentTStr, _currentSource),
       paint: {
-        'fill-color': colorExpr(_currentTStr),
+        'fill-color': colorExpr(_currentTStr, _currentSource),
         'fill-opacity': [
           'case',
           ['boolean', ['feature-state', 'hover'], false],
@@ -122,16 +124,15 @@ export async function addParcelLayer(map, initialTStr) {
       id: 'parcel-line',
       type: 'line',
       source: 'parcels',
-      minzoom: 14,
       layout: { visibility: 'none' },
-      filter: filterExpr(_currentTStr),
+      filter: filterExpr(_currentTStr, _currentSource),
       paint: {
-        'line-color': colorExpr(_currentTStr),
+        'line-color': colorExpr(_currentTStr, _currentSource),
         'line-width': [
           'case',
           ['boolean', ['feature-state', 'hover'], false],
-          2,
-          0.8,
+          3,
+          1.5,
         ],
         'line-opacity': 0.8,
       },
@@ -258,11 +259,21 @@ export function hasDistrictField() {
  */
 export function countParcels({ cd = null } = {}) {
   if (!_geojson) return null;
+  if (cd === null && _currentSource === 'both') {
+    return _metadata?.counts_by_threshold?.[_currentTStr] ?? 0;
+  }
   let n = 0;
   for (const f of _geojson.features) {
     const props = f.properties;
     if (cd !== null && Number(props.cd) !== Number(cd)) continue;
-    if (isVacantAt(props, _currentTStr)) n++;
+    if (_currentSource === 'model') {
+      if ((props[_currentTStr] || 0) < _coverageThreshold) continue;
+    } else if (_currentSource === 'pluto') {
+      if (!props.pluto_vacant) continue;
+    } else {
+      if (!isVacantAt(props, _currentTStr)) continue;
+    }
+    n++;
   }
   return n;
 }
@@ -271,10 +282,20 @@ export function updateParcelThreshold(map, tStr) {
   _currentTStr = tStr;
   if (!map.getLayer('parcel-fill')) return null;
 
-  map.setFilter('parcel-fill', filterExpr(tStr));
-  map.setFilter('parcel-line', filterExpr(tStr));
-  map.setPaintProperty('parcel-fill', 'fill-color', colorExpr(tStr));
-  map.setPaintProperty('parcel-line', 'line-color', colorExpr(tStr));
+  map.setFilter('parcel-fill', filterExpr(tStr, _currentSource));
+  map.setFilter('parcel-line', filterExpr(tStr, _currentSource));
+  map.setPaintProperty('parcel-fill', 'fill-color', colorExpr(tStr, _currentSource));
+  map.setPaintProperty('parcel-line', 'line-color', colorExpr(tStr, _currentSource));
 
   return _metadata?.counts_by_threshold?.[tStr] || 0;
+}
+
+export function updateParcelSource(map, source) {
+  _currentSource = source;
+  if (!map.getLayer('parcel-fill')) return;
+
+  map.setFilter('parcel-fill', filterExpr(_currentTStr, source));
+  map.setFilter('parcel-line', filterExpr(_currentTStr, source));
+  map.setPaintProperty('parcel-fill', 'fill-color', colorExpr(_currentTStr, source));
+  map.setPaintProperty('parcel-line', 'line-color', colorExpr(_currentTStr, source));
 }
