@@ -240,7 +240,8 @@ function updateTileSource() {
     map.getSource('product')?.setTiles([NAIP_TILE_URL]);
     return;
   }
-  const url = `/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=${vacancySource}`;
+  const tStr = layerState.overlay ? currentTStr : 't0000';
+  const url = `/api/tile/product/{z}/{x}/{y}.jpg?t=${tStr}&source=${vacancySource}`;
   map.getSource('product')?.setTiles([url]);
 }
 
@@ -393,19 +394,20 @@ function buildLayerPanel() {
         legend.append(item);
       });
 
+      panel.append(legend);
+
       const peekBtn = document.createElement('button');
       peekBtn.id = 'peek-btn';
       peekBtn.className = 'peek-btn';
+      peekBtn.disabled = true;
       peekBtn.textContent = 'Peek (hold)';
-      peekBtn.addEventListener('mousedown', () => setPeek(true));
+      peekBtn.addEventListener('mousedown', () => { if (!peekBtn.disabled) setPeek(true); });
       peekBtn.addEventListener('mouseup', () => setPeek(false));
       peekBtn.addEventListener('mouseleave', () => setPeek(false));
-      peekBtn.addEventListener('touchstart', (e) => { e.preventDefault(); setPeek(true); });
+      peekBtn.addEventListener('touchstart', (e) => { e.preventDefault(); if (!peekBtn.disabled) setPeek(true); });
       peekBtn.addEventListener('touchend', () => setPeek(false));
       peekBtn.addEventListener('touchcancel', () => setPeek(false));
-      legend.append(peekBtn);
-
-      panel.append(legend);
+      panel.append(peekBtn);
     }
 
     if (l.id === 'athletic') {
@@ -499,15 +501,17 @@ function updateSliderMute() {
 function toggleLayer(id, visible) {
   if (id === 'overlay') {
     layerState.overlay = visible;
-    map.setLayoutProperty('product-layer', 'visibility', visible ? 'visible' : 'none');
     const sourceCtrl = document.getElementById('vacancy-source-control');
-    if (sourceCtrl) sourceCtrl.hidden = !visible;
+    if (sourceCtrl) {
+      sourceCtrl.querySelectorAll('input[type=radio]').forEach(r => { r.disabled = !visible; });
+      sourceCtrl.classList.toggle('source-disabled', !visible);
+    }
+    updateTileSource();
     updateFooter();
   } else if (id === 'naip') {
     layerState.naip = visible;
     map.getSource('basemap')?.setTiles([visible ? NAIP_TILE_URL : ESRI_BASEMAP_URL]);
-    map.setLayoutProperty('product-layer', 'visibility',
-      (!visible && layerState.overlay) ? 'visible' : 'none');
+    map.setLayoutProperty('product-layer', 'visibility', visible ? 'none' : 'visible');
     updateFooter();
   } else if (id === 'cd') {
     const vis = visible ? 'visible' : 'none';
@@ -520,6 +524,8 @@ function toggleLayer(id, visible) {
     if (map.getLayer('parcel-line')) map.setLayoutProperty('parcel-line', 'visibility', vis);
     const legend = document.getElementById('parcel-legend');
     if (legend) legend.hidden = !visible;
+    const peekBtn = document.getElementById('peek-btn');
+    if (peekBtn) peekBtn.disabled = !visible;
     if (!visible && _peeking) setPeek(false);
     updateFooter();
   } else if (id === 'athletic') {

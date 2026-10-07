@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 import httpx
 import numpy as np
 from color_operations import sigmoidal, gamma, saturation
-from fastapi import Body, FastAPI, HTTPException, Query, Response
+from fastapi import Body, FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
@@ -703,6 +703,7 @@ def _composite_tile_sync(tile_bytes, z, x, y, t, src, base_kwargs, outside_kwarg
 
 @app.get("/api/tile/product/{z}/{x}/{y}.jpg")
 async def product_tile(
+    request: Request,
     z: int, x: int, y: int,
     t: str = Query("t0298"),
     source: str = Query("both"),
@@ -766,7 +767,14 @@ async def product_tile(
             return Response(content=_product_cache[cache_key], media_type="image/jpeg",
                             headers={"Cache-Control": "public, max-age=3600"})
 
+    # Skip work if the client already disconnected (e.g. tile scrolled out of view)
+    if await request.is_disconnected():
+        return Response(status_code=499)
+
     tile_bytes = await fetch_esri_tile(z, x, y)
+
+    if await request.is_disconnected():
+        return Response(status_code=499)
 
     if mode == "playground":
         base_kwargs = _aliases_to_color_params(

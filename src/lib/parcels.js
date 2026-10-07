@@ -104,7 +104,6 @@ export async function addParcelLayer(map, initialTStr) {
       id: 'parcel-fill',
       type: 'fill',
       source: 'parcels',
-      minzoom: 12,
       layout: { visibility: 'none' },
       filter: filterExpr(_currentTStr, _currentSource),
       paint: {
@@ -125,7 +124,6 @@ export async function addParcelLayer(map, initialTStr) {
       id: 'parcel-line',
       type: 'line',
       source: 'parcels',
-      minzoom: 12,
       layout: { visibility: 'none' },
       filter: filterExpr(_currentTStr, _currentSource),
       paint: {
