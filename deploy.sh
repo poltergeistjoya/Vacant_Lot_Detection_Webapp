@@ -6,8 +6,13 @@ REGION="us-east4"
 REPO="vacant-lot"
 SERVICE="vacant-lot-app"
 IMAGE="$REGION-docker.pkg.dev/$PROJECT/$REPO/app"
-# GCS bucket for pre-rendered tiles (leave empty to use live compositing)
+# GCS bucket for pre-rendered tiles
 TILE_STORE_BUCKET="vacant-lot-tiles"
+# Public URL for PMTiles archives (browser fetches directly via range requests)
+PMTILES_BASE_URL="https://storage.googleapis.com/${TILE_STORE_BUCKET}/pmtiles"
+
+echo "==> Running tests..."
+npm run test:all
 
 echo "==> Building image with Cloud Build..."
 gcloud builds submit --tag "$IMAGE" --project "$PROJECT"

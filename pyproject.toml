@@ -19,4 +19,14 @@ dependencies = [
     "color-operations>=0.2.0",
     "httpx>=0.28.1",
     "google-cloud-storage>=3.14.1",
+    "pmtiles>=3.8.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/py"]
+pythonpath = ["."]

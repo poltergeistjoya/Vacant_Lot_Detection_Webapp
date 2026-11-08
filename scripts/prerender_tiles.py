@@ -2,10 +2,11 @@
 
 Fetches Esri basemap tiles, composites them with vacancy masks using the
 production color treatments, and writes JPEG tiles to an output directory
-structured as: {out}/product/{threshold}/{z}/{x}/{y}.jpg
+structured as: {out}/product/{threshold}/{z}/{x}/{y}.jpg (source=both)
+or {out}/product-{source}/{threshold}/{z}/{x}/{y}.jpg (source=model|pluto)
 
 Usage:
-    uv run scripts/prerender_tiles.py                # all thresholds, zooms 11-18
+    uv run scripts/prerender_tiles.py                # all thresholds, zooms 11-19
     uv run scripts/prerender_tiles.py -t t0298       # single threshold
     uv run scripts/prerender_tiles.py --zoom 14 18   # zoom range
     uv run scripts/prerender_tiles.py --dry-run      # count tiles without fetching
@@ -16,8 +17,10 @@ import asyncio
 import io
 import json
 import math
+import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import httpx
@@ -27,6 +30,8 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from server.app import (
     _get_tile_masks,
+    prerendered_tile_dir,
+    prerendered_tile_path,
     _load_product_masks,
     _load_shared_masks,
     apply_color_ops_fast,
@@ -107,7 +112,7 @@ def composite_tile(tile_bytes, z, x, y, threshold, source="both"):
     return uint8_to_jpeg(result)
 
 
-async def prerender(out_dir, thresholds, zoom_min, zoom_max, concurrency, source, dry_run):
+async def prerender(out_dir, thresholds, zoom_min, zoom_max, concurrency, workers, source, dry_run):
     all_tiles = []
     for z in range(zoom_min, zoom_max + 1):
         all_tiles.extend(tiles_for_zoom(z))
@@ -129,49 +134,68 @@ async def prerender(out_dir, thresholds, zoom_min, zoom_max, concurrency, source
     errors = 0
     start = time.time()
 
+    # Compositing is numpy/PIL work that releases the GIL, so threads parallelize it
+    pool = ThreadPoolExecutor(max_workers=workers)
+    loop = asyncio.get_running_loop()
+
+    # Masks are LRU-cached server-side; compositing more thresholds per tile than the
+    # cache holds would re-decode a full mask PNG on almost every tile.
+    batch_size = _load_product_masks.cache_info().maxsize or len(thresholds)
+    batches = [thresholds[i:i + batch_size] for i in range(0, len(thresholds), batch_size)]
+
     async with httpx.AsyncClient(
         timeout=30.0,
         limits=httpx.Limits(max_connections=concurrency, max_keepalive_connections=concurrency),
     ) as client:
 
-        async def process_tile(z, x, y, threshold):
+        async def process_tile(z, x, y, batch):
+            """Fetch the Esri tile once and composite every threshold in the batch still missing."""
             nonlocal done, skipped, errors
-            tile_path = out_path / "product" / threshold / str(z) / str(x) / f"{y}.jpg"
-            if tile_path.exists():
-                skipped += 1
-                done += 1
+            paths = {t: out_path / prerendered_tile_path(z, x, y, t, source) for t in batch}
+            missing = [t for t, p in paths.items() if not p.exists()]
+            skipped += len(batch) - len(missing)
+            done += len(batch) - len(missing)
+            if not missing:
                 return
 
             async with sem:
                 try:
                     tile_bytes = await fetch_esri_tile(client, z, x, y)
-                    jpg = composite_tile(tile_bytes, z, x, y, threshold, source=source)
-                    tile_path.parent.mkdir(parents=True, exist_ok=True)
-                    tile_path.write_bytes(jpg)
-                    done += 1
+                except Exception as e:
+                    errors += len(missing)
+                    done += len(missing)
+                    print(f"  ERROR fetch {z}/{x}/{y}: {e}")
+                    return
+
+            for threshold in missing:
+                try:
+                    jpg = await loop.run_in_executor(
+                        pool, composite_tile, tile_bytes, z, x, y, threshold, source)
+                    paths[threshold].parent.mkdir(parents=True, exist_ok=True)
+                    paths[threshold].write_bytes(jpg)
                 except Exception as e:
                     errors += 1
-                    done += 1
                     print(f"  ERROR {z}/{x}/{y} ({threshold}): {e}")
+                done += 1
 
-            if done % 100 == 0:
-                elapsed = time.time() - start
-                rate = done / elapsed if elapsed > 0 else 0
-                eta = (total - done) / rate if rate > 0 else 0
-                print(f"  {done}/{total} ({skipped} cached, {errors} errors) "
-                      f"— {rate:.1f} tiles/s, ETA {eta/60:.0f}m")
+                if done % 1000 == 0:
+                    elapsed = time.time() - start
+                    rate = (done - skipped) / elapsed if elapsed > 0 else 0
+                    eta = (total - done) / rate if rate > 0 else 0
+                    print(f"  {done}/{total} ({skipped} cached, {errors} errors) "
+                          f"— {rate:.1f} tiles/s, ETA {eta/60:.0f}m", flush=True)
 
-        tasks = []
-        for threshold in thresholds:
-            _load_product_masks(threshold)
-            for z, x, y in all_tiles:
-                tasks.append(process_tile(z, x, y, threshold))
+        for batch in batches:
+            print(f"Batch: {', '.join(batch)}", flush=True)
+            for threshold in batch:
+                _load_product_masks(threshold)
+            await asyncio.gather(*(process_tile(z, x, y, batch) for z, x, y in all_tiles))
 
-        await asyncio.gather(*tasks)
+    pool.shutdown()
 
     elapsed = time.time() - start
     print(f"\nDone: {done} tiles in {elapsed:.0f}s ({skipped} cached, {errors} errors)")
-    print(f"Output: {out_path / 'product'}")
+    print(f"Output: {out_path / prerendered_tile_dir('*', source)}")
 
 
 def main():
@@ -180,10 +204,12 @@ def main():
                         help="Output directory (default: data/tiles)")
     parser.add_argument("-t", "--threshold", action="append",
                         help="Threshold to render (repeatable; default: all)")
-    parser.add_argument("--zoom", nargs=2, type=int, default=[11, 18],
-                        metavar=("MIN", "MAX"), help="Zoom range (default: 11 18)")
+    parser.add_argument("--zoom", nargs=2, type=int, default=[11, 19],
+                        metavar=("MIN", "MAX"), help="Zoom range (default: 11 19)")
     parser.add_argument("-c", "--concurrency", type=int, default=10,
                         help="Max concurrent Esri fetches (default: 10)")
+    parser.add_argument("-w", "--workers", type=int, default=os.cpu_count(),
+                        help="Compositing threads (default: CPU count)")
     parser.add_argument("--source", default="both", choices=["model", "pluto", "both"],
                         help="Vacancy source (default: both)")
     parser.add_argument("--dry-run", action="store_true",
@@ -204,7 +230,7 @@ def main():
 
     asyncio.run(prerender(
         args.out, thresholds, args.zoom[0], args.zoom[1],
-        args.concurrency, args.source, args.dry_run,
+        args.concurrency, args.workers, args.source, args.dry_run,
     ))
 
 

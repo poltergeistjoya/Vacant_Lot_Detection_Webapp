@@ -12,6 +12,12 @@ export GENERATE_MASKS_CONFIG=~/.config/generate_masks/config.local.yaml
 
 This is **not** in `.zshrc` — set it manually per session, or add it to your shell profile.
 
+## Tile compositing
+
+Vacancy product tiles (Esri imagery + vacancy masks + color treatment from `data/product_treatment.json`) must be composited in Python (`server/app.py`, `apply_color_ops_fast` / `_composite_tile_sync`). Do **not** propose moving compositing to the browser: JS/WebGL/MapLibre paint properties don't reproduce the Python color pipeline (LUT-based Oklch treatment).
+
+Serving options are therefore: prerendered tiles packaged as PMTiles (fast, served from GCS) or live server-side compositing on Cloud Run (slow fallback). Finished composited tiles can't be converted between vacancy sources (Model + PLUTO / Model only / PLUTO only), since the treatment is baked in. Each source needs its own prerendered archives.
+
 ## Data pipeline scripts
 
 - `scripts/prepare_mask_overlay.py` — generates raster vacancy masks at various thresholds

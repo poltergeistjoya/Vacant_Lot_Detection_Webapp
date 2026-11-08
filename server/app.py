@@ -47,7 +47,7 @@ _client = httpx.AsyncClient(timeout=15.0, limits=httpx.Limits(max_connections=20
 # ── Pre-rendered tile store ─────────────────────────
 # Set TILE_STORE_BUCKET to a GCS bucket name (e.g. vacant-lot-tiles)
 # or TILE_STORE_PATH to a local directory (e.g. data/tiles).
-# Tiles are expected at: product/{threshold}/{z}/{x}/{y}.jpg
+# Tiles are expected at the path returned by prerendered_tile_path().
 TILE_STORE_BUCKET = os.environ.get("TILE_STORE_BUCKET", "")
 TILE_STORE_PATH = os.environ.get("TILE_STORE_PATH", "")
 
@@ -57,6 +57,21 @@ if TILE_STORE_BUCKET:
     _gcs_bucket = gcs.Client().bucket(TILE_STORE_BUCKET)
 
 _tile_store_path = Path(TILE_STORE_PATH) if TILE_STORE_PATH else None
+
+
+def prerendered_tile_dir(threshold: str, source: str = "both") -> str:
+    """Directory of prerendered tiles for a threshold/source, relative to the store root.
+
+    "both" keeps the original product/{threshold} layout; other sources get their own
+    directory so they never collide with (or get served as) the combined tiles.
+    """
+    if source == "both":
+        return f"product/{threshold}"
+    return f"product-{source}/{threshold}"
+
+
+def prerendered_tile_path(z: int, x: int, y: int, threshold: str, source: str = "both") -> str:
+    return f"{prerendered_tile_dir(threshold, source)}/{z}/{x}/{y}.jpg"
 
 
 async def _fetch_esri_raw(z: int, x: int, y: int) -> bytes:
@@ -707,7 +722,7 @@ async def product_tile(
     z: int, x: int, y: int,
     t: str = Query("t0298"),
     source: str = Query("both"),
-    mode: str = Query(None),
+    mode: str = Query(None),  # Production tiles served via PMTiles on GCS; this route is playground fallback
     # Basemap treatment (playground mode)
     bm_sc: float = Query(0), bm_sb: float = Query(0.5),
     bm_g: float = Query(1), bm_gr: float = Query(1),
@@ -741,7 +756,7 @@ async def product_tile(
     loop = asyncio.get_running_loop()
 
     if mode != "playground":
-        tile_path = f"product/{t}/{z}/{x}/{y}.jpg"
+        tile_path = prerendered_tile_path(z, x, y, t, src)
         if _gcs_bucket:
             blob = _gcs_bucket.blob(tile_path)
             try:
