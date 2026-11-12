@@ -53,25 +53,7 @@ gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudb
 gcloud artifacts repositories create "$ARTIFACT_REPO" --repository-format=docker --location="$GCP_REGION"
 ```
 
-The browser fetches PMTiles straight from the bucket with range requests, so the bucket needs CORS for the app's origins. Save this as `cors.json`, with your domains in `origin`:
-
-```json
-[
-  {
-    "origin": ["https://your-domain.example", "http://localhost:5173", "http://localhost:4173"],
-    "method": ["GET", "HEAD"],
-    "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length", "Accept-Ranges", "ETag"],
-    "maxAgeSeconds": 3600
-  }
-]
-```
-
-```bash
-gcloud storage buckets update "gs://$TILE_STORE_BUCKET" --cors-file=cors.json
-gcloud storage buckets describe "gs://$TILE_STORE_BUCKET" --format='json(cors_config)'   # verify
-```
-
-Re-run with the updated list when adding a domain.
+The tile bucket stays private: Cloud Run reads it with its service account and serves archives at `/api/pmtiles/`. The service account needs `roles/storage.objectViewer` on the bucket.
 
 Deploy:
 

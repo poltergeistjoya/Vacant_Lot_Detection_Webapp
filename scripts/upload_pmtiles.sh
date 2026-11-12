@@ -16,7 +16,8 @@ require_env TILE_STORE_BUCKET
 
 LOCAL_ROOT="data/pmtiles"
 REMOTE_ROOT="gs://${TILE_STORE_BUCKET}/pmtiles"
-FLAGS=(--cache-control="public, max-age=86400" --predefined-acl=publicRead)
+# Objects stay private (bucket default); the API serves them (server/app.py, "PMTiles archives")
+FLAGS=(--cache-control="public, max-age=86400")
 
 DRY_RUN=0
 targets=""

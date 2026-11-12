@@ -18,7 +18,7 @@ Deployment settings (GCP project, region, Cloud Run service, bucket) live in `.e
 
 All color treatment of vacancy tiles (Esri imagery + vacancy masks + `data/product_treatment.json`) is done in Python (`server/app.py`: `apply_color_ops_fast`, `composite_tile_u8`). Do **not** move color treatment to the browser: JS/WebGL/MapLibre paint properties don't reproduce the Python pipeline (LUT-based Oklch). The browser may only do **pixel selection between tiles that Python prerendered**.
 
-Tiles are served browser → GCS as PMTiles (no Cloud Run in the path). Live compositing on Cloud Run (`/api/tile/product`) is only a fallback for local dev without PMTiles and for the playground.
+Tiles are served as PMTiles from a **private** bucket: the browser's pmtiles library makes range requests to `/api/pmtiles/<archive>`, which Cloud Run forwards to `gs://$TILE_STORE_BUCKET/pmtiles/` with its service account (`server/app.py`, "PMTiles archives"). Locally, without `TILE_STORE_BUCKET`, the same route serves `data/pmtiles/`. Don't make bucket objects public. Live compositing (`/api/tile/product`) is only a fallback and for the playground.
 
 How each vacancy source is served (`src/lib/tiles.js`):
 - **Model + PLUTO**: `pmtiles/both/{threshold}.pmtiles`, one archive per threshold.
@@ -32,7 +32,7 @@ uv run scripts/prerender_tiles.py           # Model + PLUTO loose tiles, z11–1
 uv run scripts/generate_pmtiles.py          # → data/pmtiles/both/{t}.pmtiles, pluto_nonvacant.pmtiles, model_levels.pmtiles (--archive to pick)
 npm run test:all                            # includes archive header checks
 ./scripts/upload_pmtiles.sh                 # new/changed data/pmtiles/ → gs://$TILE_STORE_BUCKET/pmtiles/ (or name archives: both, both/t0298, model_levels; -n = dry run)
-./deploy.sh                                 # runs tests + scripts/check_pmtiles_gcs.sh first
+./deploy.sh                                 # runs tests first
 ```
 
 Re-run both scripts when masks or the color treatment change. Rendering is resumable: existing loose tiles are skipped.

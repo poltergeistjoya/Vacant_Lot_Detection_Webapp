@@ -20,7 +20,6 @@ function maplibreWorkerPlugin() {
   };
 }
 
-const PMTILES_BASE_URL = process.env.VITE_PMTILES_BASE_URL || '';
 // Comma-separated archives uploaded under the base URL (see src/lib/tiles.js)
 const PMTILES_SOURCES = (process.env.VITE_PMTILES_SOURCES || 'both,pluto_nonvacant,model_levels').split(',').map(s => s.trim()).filter(Boolean);
 
@@ -28,7 +27,6 @@ export default {
   root: 'src',
   publicDir: '../data',
   define: {
-    '__PMTILES_BASE_URL__': JSON.stringify(PMTILES_BASE_URL),
     '__PMTILES_SOURCES__': JSON.stringify(PMTILES_SOURCES),
   },
   server: {

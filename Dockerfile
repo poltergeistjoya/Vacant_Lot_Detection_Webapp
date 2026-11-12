@@ -6,9 +6,6 @@ RUN npm ci
 COPY vite.config.js ./
 COPY src/ src/
 COPY data/ data/
-# Passed by deploy.sh (cloudbuild.yaml); empty = server tiles only
-ARG VITE_PMTILES_BASE_URL=""
-ENV VITE_PMTILES_BASE_URL=$VITE_PMTILES_BASE_URL
 RUN npm run build
 
 # ── Stage 2: Python runtime ──────────────────────────────────────

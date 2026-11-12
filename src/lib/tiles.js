@@ -1,9 +1,12 @@
 import * as pmtiles from 'pmtiles';
 import * as maplibregl from 'maplibre-gl';
 
-const PMTILES_BASE_URL = __PMTILES_BASE_URL__;
-// Archives uploaded under PMTILES_BASE_URL ('both', 'pluto_nonvacant', 'model_levels');
-// vacancy sources whose archives are missing fall back to server tiles
+// Archives are served by our API (server/app.py, "PMTiles archives"): range requests are
+// forwarded to the private bucket, or read from data/pmtiles locally. Absolute so the
+// pmtiles:// protocol gets a full URL.
+const PMTILES_BASE_URL = `${globalThis.location?.origin ?? ''}/api/pmtiles`;
+// Archives available under PMTILES_BASE_URL ('both', 'pluto_nonvacant', 'model_levels');
+// vacancy sources whose archives aren't listed fall back to live server tiles
 const PMTILES_SOURCES = __PMTILES_SOURCES__;
 
 // Highest zoom the map allows

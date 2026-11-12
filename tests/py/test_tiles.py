@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import httpx
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
@@ -228,3 +229,61 @@ def test_model_only_selection_reproduces_model_only_exactly():
                 assert np.array_equal(got, model), f"{z}/{x}/{y} {t}: selected tile != model-only"
     assert any(level is not None for _, _, level, _ in cases)
     assert any(level is None for _, _, level, _ in cases)
+
+
+# ── PMTiles archive route (/api/pmtiles) ──────────────
+
+@pytest.fixture
+def local_archives(tmp_path, monkeypatch):
+    (tmp_path / "both").mkdir()
+    (tmp_path / "both" / "t0298.pmtiles").write_bytes(bytes(range(256)) * 4)
+    monkeypatch.setattr(app_mod, "TILE_STORE_BUCKET", "")
+    monkeypatch.setattr(app_mod, "PMTILES_LOCAL_DIR", tmp_path)
+    return TestClient(app)
+
+
+def test_pmtiles_serves_requested_range(local_archives):
+    r = local_archives.get("/api/pmtiles/both/t0298.pmtiles", headers={"Range": "bytes=10-19"})
+    assert r.status_code == 206
+    assert r.content == bytes(range(10, 20))
+    assert r.headers["content-range"] == "bytes 10-19/1024"
+    assert r.headers["etag"]
+
+
+def test_pmtiles_clamps_range_past_end(local_archives):
+    r = local_archives.get("/api/pmtiles/both/t0298.pmtiles", headers={"Range": "bytes=1020-2000"})
+    assert r.status_code == 206
+    assert r.headers["content-range"] == "bytes 1020-1023/1024"
+
+
+@pytest.mark.parametrize("range_header", [None, "bytes=0-", "bytes=5-1", f"bytes=0-{16 * 1024 * 1024}"])
+def test_pmtiles_requires_bounded_range(local_archives, range_header):
+    headers = {"Range": range_header} if range_header else {}
+    r = local_archives.get("/api/pmtiles/both/t0298.pmtiles", headers=headers)
+    assert r.status_code == 416
+
+
+@pytest.mark.parametrize("name", ["both/missing.pmtiles", "both/..%2Fboth%2Ft0298.pmtiles", "both/t0298.jpg", "..%2F.env"])
+def test_pmtiles_only_serves_archives(local_archives, name):
+    r = local_archives.get(f"/api/pmtiles/{name}", headers={"Range": "bytes=0-9"})
+    assert r.status_code == 404
+
+
+def test_pmtiles_forwards_range_to_private_bucket(monkeypatch):
+    seen = {}
+
+    async def fake_get(url, headers):
+        seen.update(url=url, headers=headers)
+        return httpx.Response(206, content=b"abc", headers={"content-range": "bytes 5-7/99", "etag": '"e"'})
+
+    async def fake_token():
+        return "tok"
+
+    monkeypatch.setattr(app_mod, "TILE_STORE_BUCKET", "bucket")
+    monkeypatch.setattr(app_mod._gcs_http, "get", fake_get)
+    monkeypatch.setattr(app_mod, "_gcs_token", fake_token)
+    r = TestClient(app).get("/api/pmtiles/model_levels.pmtiles", headers={"Range": "bytes=5-7"})
+    assert r.status_code == 206 and r.content == b"abc"
+    assert r.headers["content-range"] == "bytes 5-7/99"
+    assert seen["url"] == "https://storage.googleapis.com/bucket/pmtiles/model_levels.pmtiles"
+    assert seen["headers"] == {"Authorization": "Bearer tok", "Range": "bytes=5-7"}

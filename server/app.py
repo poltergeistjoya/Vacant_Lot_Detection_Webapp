@@ -12,6 +12,7 @@ import json
 import logging
 import math
 import os
+import re
 import time
 from collections import OrderedDict
 from functools import lru_cache
@@ -793,13 +794,105 @@ def composite_tile_u8(tile_u8, z, x, y, t, src, base_kwargs, outside_kwargs, nv_
     return result
 
 
+# ── PMTiles archives ─────────────────────────────────
+# The bucket is private. The browser's pmtiles library makes HTTP range requests to
+# /api/pmtiles/<archive>; they're forwarded to gs://TILE_STORE_BUCKET/pmtiles/ with the
+# service account's credentials (same region, so GCS → Cloud Run transfer is free).
+# Without a bucket (local dev), archives are served from data/pmtiles/.
+
+PMTILES_PREFIX = "pmtiles"
+PMTILES_LOCAL_DIR = DATA_DIR / "pmtiles"
+# Largest range served per request. pmtiles reads headers, directories and single tiles
+# (all well under this); the cap stops whole archives being pulled through the API.
+PMTILES_MAX_RANGE = 16 * 1024 * 1024
+PMTILES_CACHE_CONTROL = "public, max-age=86400"
+_PMTILES_NAME = re.compile(r"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*\.pmtiles$")
+_RANGE = re.compile(r"^bytes=(\d+)-(\d+)$")
+
+_gcs_http = httpx.AsyncClient(timeout=15.0, limits=httpx.Limits(max_connections=100))
+_gcs_credentials = None
+_gcs_credentials_lock = asyncio.Lock()
+
+
+def _parse_range(header):
+    """(start, end) inclusive from 'bytes=start-end'; 416 if missing, malformed or too large."""
+    m = _RANGE.match(header or "")
+    if not m:
+        raise HTTPException(416, "Range header 'bytes=start-end' required")
+    start, end = int(m.group(1)), int(m.group(2))
+    if end < start or end - start + 1 > PMTILES_MAX_RANGE:
+        raise HTTPException(416, "Invalid or too large range")
+    return start, end
+
+
+async def _gcs_token():
+    global _gcs_credentials
+    async with _gcs_credentials_lock:
+        if _gcs_credentials is None:
+            import google.auth
+            _gcs_credentials, _ = google.auth.default(
+                scopes=["https://www.googleapis.com/auth/devstorage.read_only"])
+        if not _gcs_credentials.valid:
+            from google.auth.transport.requests import Request as AuthRequest
+            await asyncio.to_thread(_gcs_credentials.refresh, AuthRequest())
+        return _gcs_credentials.token
+
+
+async def _pmtiles_range_gcs(name, start, end):
+    url = f"https://storage.googleapis.com/{TILE_STORE_BUCKET}/{PMTILES_PREFIX}/{name}"
+    r = await _gcs_http.get(url, headers={
+        "Authorization": f"Bearer {await _gcs_token()}",
+        "Range": f"bytes={start}-{end}",
+    })
+    if r.status_code == 404:
+        raise HTTPException(404, "Archive not found")
+    if r.status_code == 416:
+        raise HTTPException(416, "Range not satisfiable")
+    if r.status_code != 206:
+        logger.warning("pmtiles gcs %s %s: %s", name, r.status_code, r.text[:200])
+        raise HTTPException(502, "Archive read failed")
+    return r.content, r.headers["content-range"], r.headers.get("etag", "")
+
+
+def _pmtiles_range_local(name, start, end):
+    path = PMTILES_LOCAL_DIR / name
+    if not path.is_file():
+        raise HTTPException(404, "Archive not found")
+    stat = path.stat()
+    if start >= stat.st_size:
+        raise HTTPException(416, "Range not satisfiable")
+    end = min(end, stat.st_size - 1)
+    with open(path, "rb") as f:
+        f.seek(start)
+        data = f.read(end - start + 1)
+    return data, f"bytes {start}-{end}/{stat.st_size}", f'"{stat.st_mtime_ns:x}-{stat.st_size:x}"'
+
+
+@app.get("/api/pmtiles/{name:path}")
+async def pmtiles_archive(name: str, request: Request):
+    """Byte range of a PMTiles archive (see "PMTiles archives" above)."""
+    if not _PMTILES_NAME.match(name):
+        raise HTTPException(404, "Archive not found")
+    start, end = _parse_range(request.headers.get("range"))
+    if TILE_STORE_BUCKET:
+        data, content_range, etag = await _pmtiles_range_gcs(name, start, end)
+    else:
+        data, content_range, etag = await asyncio.to_thread(_pmtiles_range_local, name, start, end)
+    headers = {"Content-Range": content_range, "Accept-Ranges": "bytes",
+               "Cache-Control": PMTILES_CACHE_CONTROL}
+    if etag:
+        headers["ETag"] = etag
+    return Response(content=data, status_code=206, media_type="application/octet-stream",
+                    headers=headers)
+
+
 @app.get("/api/tile/product/{z}/{x}/{y}.jpg")
 async def product_tile(
     request: Request,
     z: int, x: int, y: int,
     t: str = Query("t0298"),
     source: str = Query("both"),
-    mode: str = Query(None),  # Production tiles served via PMTiles on GCS; this route is playground fallback
+    mode: str = Query(None),  # Production tiles come from PMTiles (/api/pmtiles); this route is a fallback
     # Basemap treatment (playground mode)
     bm_sc: float = Query(0), bm_sb: float = Query(0.5),
     bm_g: float = Query(1), bm_gr: float = Query(1),
