@@ -5,6 +5,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 COPY vite.config.js ./
 COPY src/ src/
+# The build picks the files it needs from data/ (WEB_DATA in vite.config.js)
 COPY data/ data/
 RUN npm run build
 
@@ -17,8 +18,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-cache
 
-COPY server/ server/
-COPY data/ data/
+# Only the archive proxy (server/app.py); compositing, the playground and data/ stay out
+COPY server/__init__.py server/app.py server/
 COPY --from=frontend /app/dist/ dist/
 
 EXPOSE 8000

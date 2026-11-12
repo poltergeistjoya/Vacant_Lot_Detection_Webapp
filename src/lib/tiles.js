@@ -2,27 +2,15 @@ import * as pmtiles from 'pmtiles';
 import * as maplibregl from 'maplibre-gl';
 
 // Archives are served by our API (server/app.py, "PMTiles archives"): range requests are
-// forwarded to the private bucket, or read from data/pmtiles locally. Absolute so the
-// pmtiles:// protocol gets a full URL.
+// forwarded to the private bucket. Absolute so the pmtiles:// protocol gets a full URL.
 const PMTILES_BASE_URL = `${globalThis.location?.origin ?? ''}/api/pmtiles`;
-// Archives available under PMTILES_BASE_URL ('both', 'pluto_nonvacant', 'model_levels');
-// vacancy sources whose archives aren't listed fall back to live server tiles
-const PMTILES_SOURCES = __PMTILES_SOURCES__;
 
-// Highest zoom the map allows
+// Highest zoom the map allows; the archives cover every zoom up to it
+// (prerender_tiles.py / generate_pmtiles.py --zoom default, checked by test_pmtiles_archive_header)
 export const MAP_MAX_ZOOM = 19;
-// Highest zoom baked into PMTiles archives (prerender_tiles.py --zoom default)
-export const PMTILES_MAX_ZOOM = 19;
-// Highest zoom of the server's low-zoom placeholder layer (no PMTiles)
-const SERVER_CACHED_MAX_ZOOM = 18;
 
-// Product layers, bottom to top. 'product-cached' is the PMTiles archive (or a
-// server placeholder up to z18); 'product' is server tiles for zooms the archive
-// doesn't cover.
-export const PRODUCT_LAYERS = [
-  { layerId: 'product-cached-layer', sourceId: 'product-cached' },
-  { layerId: 'product-layer', sourceId: 'product' },
-];
+// The vacancy product layer (all sources and thresholds share it)
+export const PRODUCT_LAYER = { layerId: 'product-layer', sourceId: 'product' };
 
 let _protocol = null;
 
@@ -56,19 +44,8 @@ export function archiveFor(threshold, source) {
   return source === 'pluto' ? PLUTO_ONLY_ARCHIVE : { source, threshold };
 }
 
-// Archives each vacancy source needs
-const REQUIRED_ARCHIVES = {
-  both: ['both'],
-  pluto: ['both'],
-  model: ['both', 'pluto_nonvacant', 'model_levels'],
-};
-
-export function usesPMTiles(source, base = PMTILES_BASE_URL, available = PMTILES_SOURCES) {
-  return !!base && (REQUIRED_ARCHIVES[source] ?? [source]).every(a => available.includes(a));
-}
-
 // ── Model-only from Model + PLUTO ────────────────────
-// See "Model-only from Model + PLUTO" in server/app.py. All color treatment is prerendered in
+// See "Model-only from Model + PLUTO" in server/compositing.py. All color treatment is prerendered in
 // Python; the browser only picks, per pixel, between two prerendered tiles.
 
 export const MODEL_ONLY_PROTOCOL = 'vacancy-model';
@@ -161,33 +138,12 @@ export function pmtilesProductUrl(threshold, source, base = PMTILES_BASE_URL) {
   return `pmtiles://${base}/${archive.source}/${archive.threshold}.pmtiles`;
 }
 
-export function serverProductUrl(threshold, source) {
-  return `/api/tile/product/{z}/{x}/{y}.jpg?t=${threshold}&source=${source}`;
-}
-
-/**
- * Product layer specs keyed by source id, plus whether each layer is needed.
- *
- * With PMTiles for this vacancy source the archive serves every zoom it has; server
- * tiles only fill zooms above PMTILES_MAX_ZOOM (otherwise those are blurry upscales).
- * Without PMTiles: server tiles at every zoom, as before the PMTiles migration.
- */
-export function productSources(threshold, source, base = PMTILES_BASE_URL, available = PMTILES_SOURCES,
-                               pmMaxZoom = PMTILES_MAX_ZOOM) {
-  const pm = usesPMTiles(source, base, available);
-  const server = serverProductUrl(threshold, source);
-  const detailMinZoom = pm ? Math.min(pmMaxZoom + 1, MAP_MAX_ZOOM) : 0;
-  let cached;
-  if (!pm) cached = { type: 'raster', tiles: [server], tileSize: 256, maxzoom: SERVER_CACHED_MAX_ZOOM };
-  else if (source === 'model') cached = { type: 'raster', tiles: [modelOnlyTileUrl(threshold)], tileSize: 256, maxzoom: pmMaxZoom };
-  else cached = { type: 'raster', url: pmtilesProductUrl(threshold, source, base), tileSize: 256, maxzoom: pmMaxZoom };
-  return {
-    'product-cached': { enabled: true, spec: cached },
-    product: {
-      enabled: !pm || pmMaxZoom < MAP_MAX_ZOOM,
-      spec: { type: 'raster', tiles: [server], tileSize: 256, minzoom: detailMinZoom, maxzoom: MAP_MAX_ZOOM },
-    },
-  };
+/** Raster source spec for a vacancy source at a threshold. */
+export function productSource(threshold, source, base = PMTILES_BASE_URL) {
+  if (source === 'model') {
+    return { type: 'raster', tiles: [modelOnlyTileUrl(threshold)], tileSize: 256, maxzoom: MAP_MAX_ZOOM };
+  }
+  return { type: 'raster', url: pmtilesProductUrl(threshold, source, base), tileSize: 256, maxzoom: MAP_MAX_ZOOM };
 }
 
 /** Whether the vacancy product should be drawn (NAIP and overlay-off show the plain basemap). */

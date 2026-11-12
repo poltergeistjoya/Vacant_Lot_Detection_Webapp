@@ -1,17 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { readdirSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
 
 vi.mock('maplibre-gl', () => ({ addProtocol: vi.fn() }));
 vi.mock('pmtiles', () => ({ Protocol: class {}, PMTiles: class {} }));
 
 import {
-  selectModelOnly, makeModelOnlyHandler, productSources, usesPMTiles, modelOnlyUrls,
+  selectModelOnly, makeModelOnlyHandler, productSource, modelOnlyUrls,
 } from '../../src/lib/tiles.js';
 import { CHECKPOINTS } from '../../src/lib/layers.js';
 
 const BASE = 'https://storage.googleapis.com/bucket/pmtiles';
-const ALL = ['both', 'pluto_nonvacant', 'model_levels'];
 const THRESHOLDS = CHECKPOINTS.map(c => c.tStr);
 
 // RGBA pixels: one value per pixel, repeated in R, G, B
@@ -41,25 +38,10 @@ describe('selectModelOnly', () => {
 });
 
 describe('Model-only sources', () => {
-  it('needs the Model + PLUTO archives, pluto_nonvacant and model_levels', () => {
-    expect(usesPMTiles('model', BASE, ALL)).toBe(true);
-    expect(usesPMTiles('model', BASE, ['both'])).toBe(false);
-    expect(usesPMTiles('model', BASE, ['both', 'pluto_nonvacant'])).toBe(false);
-  });
-
-  it('uses the vacancy-model protocol per threshold, with no server detail layer', () => {
-    const l = productSources('t0298', 'model', BASE, ALL);
-    expect(l['product-cached'].spec.tiles[0]).toBe('vacancy-model://{z}/{x}/{y}?t=t0298');
-    expect(l['product-cached'].spec.maxzoom).toBe(19);
-    expect(l.product.enabled).toBe(false);
-  });
-
-  it('frontend thresholds match the mask order the level tiles encode', () => {
-    const masks = resolve(__dirname, '../../data/masks');
-    if (!existsSync(masks)) return;
-    const dirs = readdirSync(masks, { withFileTypes: true })
-      .filter(d => d.isDirectory() && d.name.startsWith('t')).map(d => d.name).sort();
-    expect(THRESHOLDS).toEqual(dirs);
+  it('uses the vacancy-model protocol per threshold', () => {
+    const s = productSource('t0298', 'model', BASE);
+    expect(s.tiles[0]).toBe('vacancy-model://{z}/{x}/{y}?t=t0298');
+    expect(s.maxzoom).toBe(19);
   });
 });
 

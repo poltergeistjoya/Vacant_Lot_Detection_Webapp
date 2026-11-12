@@ -7,8 +7,8 @@ import {
   BRONX_CD_NAMES,
 } from './lib/layers.js';
 import {
-  initPMTilesProtocol, usesPMTiles, productSources, productVisible, setRasterSource,
-  PRODUCT_LAYERS, PMTILES_MAX_ZOOM, MAP_MAX_ZOOM,
+  initPMTilesProtocol, productSource, productVisible, setRasterSource,
+  PRODUCT_LAYER, MAP_MAX_ZOOM,
 } from './lib/tiles.js';
 import { addDistrictLayer } from './lib/districts.js';
 import {
@@ -192,8 +192,6 @@ function updateFooter() {
 }
 
 // ── Map ─────────────────────────────────────────────
-const initialProduct = productSources(currentTStr, vacancySource);
-
 const initialSources = {
   basemap: {
     type: 'raster',
@@ -201,17 +199,12 @@ const initialSources = {
     tileSize: 256,
     attribution: ESRI_ATTRIBUTION,
   },
-  ...Object.fromEntries(Object.entries(initialProduct).map(([id, { spec }]) => [id, spec])),
+  [PRODUCT_LAYER.sourceId]: productSource(currentTStr, vacancySource),
 };
 
 const initialLayers = [
   { id: 'basemap-layer', type: 'raster', source: 'basemap' },
-  ...PRODUCT_LAYERS.map(({ layerId, sourceId }) => ({
-    id: layerId,
-    type: 'raster',
-    source: sourceId,
-    layout: { visibility: initialProduct[sourceId].enabled ? 'visible' : 'none' },
-  })),
+  { id: PRODUCT_LAYER.layerId, type: 'raster', source: PRODUCT_LAYER.sourceId },
 ];
 
 const map = window._map = new maplibregl.Map({
@@ -241,13 +234,9 @@ map.on('idle', () => {
 
 // ── Tile URL logic ─────────────────────────────────
 function updateTileSource() {
-  const layers = productSources(currentTStr, vacancySource);
-  const show = productVisible(layerState);
-  for (const { layerId, sourceId } of PRODUCT_LAYERS) {
-    const { spec, enabled } = layers[sourceId];
-    setRasterSource(map, layerId, sourceId, spec);
-    map.setLayoutProperty(layerId, 'visibility', show && enabled ? 'visible' : 'none');
-  }
+  const { layerId, sourceId } = PRODUCT_LAYER;
+  setRasterSource(map, layerId, sourceId, productSource(currentTStr, vacancySource));
+  map.setLayoutProperty(layerId, 'visibility', productVisible(layerState) ? 'visible' : 'none');
 }
 
 function applyBasemapTreatment(bm) {
@@ -549,7 +538,6 @@ function toggleLayer(id, visible) {
 // ── Threshold change ────────────────────────────────
 function onThresholdChange(cp) {
   currentTStr = cp.tStr;
-  _prefetched.clear();
   updateTileSource();
   
     const count = updateParcelThreshold(map, cp.tStr);
@@ -568,48 +556,6 @@ function onThresholdChange(cp) {
   updateStats();
 }
 
-// ── Tile prefetch (server-rendered zooms only) ──────
-const _prefetched = new Set();
-let _prefetchDebounce = null;
-
-function prefetchTilesAtZoom(zoom) {
-  if (!productVisible(layerState)) return;
-  if (usesPMTiles(vacancySource) && zoom <= PMTILES_MAX_ZOOM) return;
-  const bounds = map.getBounds();
-  const n = 2 ** zoom;
-  const toTileX = lng => Math.floor((lng + 180) / 360 * n);
-  const toTileY = lat => {
-    const r = lat * Math.PI / 180;
-    return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
-  };
-  const minX = toTileX(bounds.getWest());
-  const maxX = toTileX(bounds.getEast());
-  const minY = toTileY(bounds.getNorth());
-  const maxY = toTileY(bounds.getSouth());
-  for (let x = minX; x <= maxX; x++) {
-    for (let y = minY; y <= maxY; y++) {
-      const key = `${zoom}/${x}/${y}/${currentTStr}/${vacancySource}`;
-      if (_prefetched.has(key)) continue;
-      _prefetched.add(key);
-      fetch(`/api/tile/product/${zoom}/${x}/${y}.jpg?t=${currentTStr}&source=${vacancySource}`)
-        .catch(() => {});
-    }
-  }
-}
-
-function prefetchPlutoTiles() {
-  clearTimeout(_prefetchDebounce);
-  _prefetchDebounce = setTimeout(() => {
-    const zoom = Math.round(map.getZoom());
-    prefetchTilesAtZoom(zoom);
-    if (zoom >= 16 && zoom <= 18) {
-      prefetchTilesAtZoom(zoom + 1);
-    } else if (zoom === 19) {
-      prefetchTilesAtZoom(18);
-    }
-  }, 1000);
-}
-
 // ── Imagery metadata ───────────────────────────────
 let imageryDebounce = null;
 function onMapMove() {
@@ -619,7 +565,6 @@ function onMapMove() {
     imagerySource = await fetchImageryInfo(lng, lat, map.getZoom());
     updateFooter();
   }, 500);
-  prefetchPlutoTiles();
 }
 
 // ── Init ────────────────────────────────────────────
@@ -646,7 +591,6 @@ map.on('load', () => {
   }
   onMapMove();
   map.on('moveend', onMapMove);
-  prefetchPlutoTiles();
 });
 
 async function addCDLayer() {

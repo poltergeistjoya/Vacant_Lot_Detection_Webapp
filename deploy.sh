@@ -2,8 +2,9 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-source scripts/env.sh
-require_env GCP_PROJECT GCP_REGION ARTIFACT_REPO CLOUD_RUN_SERVICE TILE_STORE_BUCKET
+if [[ -f .env ]]; then set -a; source .env; set +a; fi
+: "${GCP_PROJECT:?set it in .env}" "${GCP_REGION:?set it in .env}" "${ARTIFACT_REPO:?set it in .env}"
+: "${CLOUD_RUN_SERVICE:?set it in .env}" "${TILE_STORE_BUCKET:?set it in .env}"
 
 IMAGE="$GCP_REGION-docker.pkg.dev/$GCP_PROJECT/$ARTIFACT_REPO/app"
 

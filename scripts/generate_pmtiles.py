@@ -33,6 +33,13 @@ from pathlib import Path
 from pmtiles.tile import TileType, Compression, zxy_to_tileid
 from pmtiles.writer import Writer
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from server.compositing import THRESHOLDS
+from logger import get_logger
+from prerender_tiles import PRODUCT_DIR, fetch_esri_tile, tiles_for_zoom
+
+log = get_logger()
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 MASKS_DIR = DATA_DIR / "masks"
 BOUNDS = json.loads((MASKS_DIR / "bounds.json").read_text())
@@ -67,7 +74,7 @@ def build_archive(tile_dir, output_path, tile_type=TileType.JPEG, ext=".jpg",
     """Create a PMTiles archive from a directory of z/x/y{ext} tiles."""
     entries = collect_tiles(tile_dir, ext) if tile_dir.exists() else []
     if not entries:
-        print(f"  No tiles found in {tile_dir}")
+        log.warning("No tiles found in %s", tile_dir)
         return 0
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -95,34 +102,27 @@ def build_archive(tile_dir, output_path, tile_type=TileType.JPEG, ext=".jpg",
         })
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
-    print(f"  {len(entries)} tiles → {output_path.name} ({size_mb:.1f} MB)")
+    log.info("%d tiles → %s (%.1f MB)", len(entries), output_path, size_mb)
     return len(entries)
 
 
 # ── both/{t}.pmtiles ────────────────────────────────
 
 def package_both(input_dir, output_dir, thresholds=None):
-    # Mirrors server.app.prerendered_tile_dir (not imported: loading server.app pulls in masks/GCS)
-    product_dir = input_dir / "product"
-    if not product_dir.exists():
-        print(f"Product tile directory not found: {product_dir}")
-        print("Run prerender_tiles.py first to generate tiles.")
-        sys.exit(1)
-
-    all_thresholds = sorted(
-        d.name for d in product_dir.iterdir()
-        if d.is_dir() and d.name.startswith("t")
-    )
-    thresholds = thresholds or all_thresholds
-    invalid = [t for t in thresholds if t not in all_thresholds]
+    product_dir = input_dir / PRODUCT_DIR
+    thresholds = thresholds or THRESHOLDS
+    invalid = [t for t in thresholds if t not in THRESHOLDS]
     if invalid:
-        print(f"Unknown thresholds: {invalid}")
-        print(f"Available: {all_thresholds}")
+        log.error("Unknown thresholds: %s. Available: %s", invalid, THRESHOLDS)
+        sys.exit(1)
+    missing = [t for t in thresholds if not (product_dir / t).is_dir()]
+    if missing:
+        log.error("No loose tiles in %s for %s. Run prerender_tiles.py first.", product_dir, missing)
         sys.exit(1)
 
-    print(f"both: {product_dir} → {output_dir / 'both'} ({len(thresholds)} thresholds)")
+    log.info("both: %s → %s (%d thresholds)", product_dir, output_dir / "both", len(thresholds))
     for threshold in thresholds:
-        print(f"{threshold}:")
+        log.info("both/%s", threshold)
         build_archive(product_dir / threshold, output_dir / "both" / f"{threshold}.pmtiles")
 
 
@@ -133,11 +133,10 @@ async def render_pluto_layers(input_dir, zoom_min, zoom_max, concurrency, worker
     containing PLUTO pixels. Skips tiles already written."""
     import httpx
     from PIL import Image
-    from server.app import (
+    from server.compositing import (
         PRODUCT_NV, apply_color_ops_fast, _load_model_levels, get_model_level_tile,
         tile_bytes_to_uint8, uint8_to_jpeg,
     )
-    from prerender_tiles import fetch_esri_tile, tiles_for_zoom
 
     def level_png(level_tile):
         buf = io.BytesIO()
@@ -153,7 +152,7 @@ async def render_pluto_layers(input_dir, zoom_min, zoom_max, concurrency, worker
     loop = asyncio.get_running_loop()
     sem = asyncio.Semaphore(concurrency)
     stats = {"rendered": 0, "no_pluto": 0, "cached": 0, "errors": 0}
-    print("Loading masks...", flush=True)
+    log.info("Loading masks...")
     _load_model_levels()  # load once up front, not concurrently from worker threads
     start = time.time()
 
@@ -179,7 +178,7 @@ async def render_pluto_layers(input_dir, zoom_min, zoom_max, concurrency, worker
                     tile_bytes = await fetch_esri_tile(client, z, x, y)
                 except Exception as e:
                     stats["errors"] += 1
-                    print(f"  ERROR fetch {z}/{x}/{y}: {e}")
+                    log.error("Fetch %d/%d/%d failed: %s", z, x, y, e)
                     return
 
             jpg = await loop.run_in_executor(pool, nonvacant_jpg, tile_bytes)
@@ -193,20 +192,20 @@ async def render_pluto_layers(input_dir, zoom_min, zoom_max, concurrency, worker
 
             if stats["rendered"] % 500 == 0:
                 rate = stats["rendered"] / (time.time() - start)
-                print(f"  {stats} — {rate:.1f} tiles/s", flush=True)
+                log.info("%s — %.1f tiles/s", stats, rate)
 
         for z in range(zoom_min, zoom_max + 1):
             tiles = tiles_for_zoom(z)
-            print(f"z{z}: {len(tiles)} candidate tiles", flush=True)
+            log.info("z%d: %d candidate tiles", z, len(tiles))
             await asyncio.gather(*(process_tile(z, x, y) for _, x, y in tiles))
 
     pool.shutdown()
-    print(f"Rendered in {time.time() - start:.0f}s: {stats}")
+    log.info("Rendered in %.0fs: %s", time.time() - start, stats)
     return stats
 
 
 def package_pluto_nonvacant(input_dir, output_dir):
-    print("pluto_nonvacant:")
+    log.info("pluto_nonvacant")
     build_archive(input_dir / "pluto_nonvacant", output_dir / "pluto_nonvacant.pmtiles", metadata={
         "name": "Bronx PLUTO lots, non-vacant treatment",
         "description": "Esri + non-vacant treatment, tiles containing PLUTO lots only",
@@ -214,14 +213,15 @@ def package_pluto_nonvacant(input_dir, output_dir):
 
 
 def package_model_levels(input_dir, output_dir):
-    from server.app import mask_thresholds
-
-    print("model_levels:")
+    '''
+    model levels are PNG for lossless compression. 
+    '''
+    log.info("model_levels")
     build_archive(input_dir / "model_levels", output_dir / "model_levels.pmtiles",
                   tile_type=TileType.PNG, ext=".png", metadata={
         "name": "Bronx model vacancy levels on PLUTO lots",
         "description": "Per PLUTO pixel: number of thresholds the model calls it vacant; 255 = not PLUTO",
-        "thresholds": mask_thresholds(),
+        "thresholds": THRESHOLDS,
     })
 
 
@@ -254,13 +254,12 @@ def main():
 
     pluto = [a for a in archives if a != "both"]
     if pluto:
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
         if not args.package_only:
             # Both loose sets come from one pass (same tiles, same Esri fetch)
             stats = asyncio.run(render_pluto_layers(args.input, args.zoom[0], args.zoom[1],
                                                     args.concurrency, args.workers))
             if stats["errors"]:
-                print(f"{stats['errors']} tiles failed; re-run to retry before packaging.")
+                log.error("%d tiles failed; re-run to retry before packaging.", stats["errors"])
                 sys.exit(1)
         if not args.render_only:
             if "pluto_nonvacant" in pluto:
@@ -268,7 +267,7 @@ def main():
             if "model_levels" in pluto:
                 package_model_levels(args.input, args.output)
 
-    print(f"\nDone in {time.time() - start:.0f}s")
+    log.info("Done in %.0fs", time.time() - start)
 
 
 if __name__ == "__main__":

@@ -20,15 +20,46 @@ function maplibreWorkerPlugin() {
   };
 }
 
-// Comma-separated archives uploaded under the base URL (see src/lib/tiles.js)
-const PMTILES_SOURCES = (process.env.VITE_PMTILES_SOURCES || 'both,pluto_nonvacant,model_levels').split(',').map(s => s.trim()).filter(Boolean);
+// Files from data/ the frontend fetches, served at the site root. Only these are served
+// and built, not all of data/ (masks, loose tiles and archives stay local).
+const DATA_DIR = path.resolve(__dirname, 'data');
+const WEB_DATA = [
+  'thresholds.json', 'product_treatment.json',
+  'community_districts.geojson', 'parcels.geojson', 'athletic_surfaces_enriched.geojson',
+];
+// Playground only (dev server; the playground isn't built)
+const DEV_DATA = ['masks/boundary.png', 'masks/bounds.json'];
+const CONTENT_TYPES = { '.json': 'application/json', '.geojson': 'application/geo+json', '.png': 'image/png' };
+
+function dataFilesPlugin() {
+  return {
+    name: 'data-files',
+    configureServer(server) {
+      const served = new Set([...WEB_DATA, ...DEV_DATA]);
+      server.middlewares.use((req, res, next) => {
+        const name = decodeURIComponent(req.url.split('?')[0]).replace(/^\//, '');
+        const file = path.join(DATA_DIR, name);
+        if (!served.has(name) || !fs.existsSync(file)) return next();
+        res.setHeader('Content-Type', CONTENT_TYPES[path.extname(name)]);
+        fs.createReadStream(file).pipe(res);
+      });
+    },
+    generateBundle() {
+      for (const name of WEB_DATA) {
+        const file = path.join(DATA_DIR, name);
+        if (!fs.existsSync(file)) {
+          this.warn(`data/${name} not found, not included in the build`);
+          continue;
+        }
+        this.emitFile({ type: 'asset', fileName: name, source: fs.readFileSync(file) });
+      }
+    },
+  };
+}
 
 export default {
   root: 'src',
-  publicDir: '../data',
-  define: {
-    '__PMTILES_SOURCES__': JSON.stringify(PMTILES_SOURCES),
-  },
+  publicDir: false,
   server: {
     proxy: {
       '/api': {
@@ -49,7 +80,7 @@ export default {
       },
     },
   },
-  plugins: [maplibreWorkerPlugin(), {
+  plugins: [maplibreWorkerPlugin(), dataFilesPlugin(), {
     name: 'serve-tiles',
     configureServer(server) {
       server.middlewares.use('/tiles', (req, res, next) => {

@@ -16,7 +16,6 @@ const TRANSPARENT_1PX =
 function productTileUrl(threshold, bm, vc, nv) {
   const params = new URLSearchParams();
   params.set('t', threshold);
-  params.set('mode', 'playground');
 
   const prefixes = { bm_: bm, vc_: vc, nv_: nv };
   for (const [prefix, obj] of Object.entries(prefixes)) {

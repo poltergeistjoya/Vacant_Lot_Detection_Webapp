@@ -1,7 +1,7 @@
 // Playground state persistence — backed by a JSON file on disk
 // (data/playground_snapshots.json) via the FastAPI backend, so snapshots
 // survive clearing browser data and are portable across browsers on this
-// machine. See server/app.py's /api/snapshots endpoints.
+// machine. See server/playground.py's /api/snapshots endpoints.
 
 const API_BASE = '/api/snapshots';
 
