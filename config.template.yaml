@@ -1,8 +1,8 @@
 # Copy this file to config.local.yaml and fill in your local paths.
 # config.local.yaml is gitignored — never commit it.
 #
-# For worktree persistence, set GENERATE_MASKS_CONFIG env var to a
-# stable path (e.g. ~/.config/generate_masks/config.local.yaml).
+# Put it in the repo root, or in the folder above it to share one copy across
+# worktrees. GENERATE_MASKS_CONFIG=<path> overrides both.
 
 # External files produced by the training pipeline (generated once, not here)
 data:

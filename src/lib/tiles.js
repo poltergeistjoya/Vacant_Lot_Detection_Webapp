@@ -1,0 +1,180 @@
+import * as pmtiles from 'pmtiles';
+import * as maplibregl from 'maplibre-gl';
+
+// Archives are served by our API (server/app.py, "PMTiles archives"): range requests are
+// forwarded to the private bucket. Absolute so the pmtiles:// protocol gets a full URL.
+const PMTILES_BASE_URL = `${globalThis.location?.origin ?? ''}/api/pmtiles`;
+
+// Highest zoom the map allows; the archives cover every zoom up to it
+// (prerender_tiles.py / generate_pmtiles.py --zoom default, checked by test_pmtiles_archive_header)
+export const MAP_MAX_ZOOM = 19;
+
+// The vacancy product layer (all sources and thresholds share it)
+export const PRODUCT_LAYER = { layerId: 'product-layer', sourceId: 'product' };
+
+let _protocol = null;
+
+export function initPMTilesProtocol() {
+  if (_protocol) return;
+  _protocol = new pmtiles.Protocol();
+  maplibregl.addProtocol('pmtiles', _protocol.tile);
+  maplibregl.addProtocol(MODEL_ONLY_PROTOCOL, makeModelOnlyHandler({
+    getArchive, decodePixels, pixelsToImage,
+  }));
+}
+
+// One PMTiles instance per archive, shared with the pmtiles:// protocol so headers,
+// directories and tiles fetched for Model + PLUTO are reused for Model-only.
+function getArchive(url) {
+  let archive = _protocol.get(url);
+  if (!archive) {
+    archive = new pmtiles.PMTiles(url);
+    _protocol.add(archive);
+  }
+  return archive;
+}
+
+// No pixel is model-vacant at t1000, so the Model + PLUTO archive at t1000 is
+// exactly the PLUTO-only product (PLUTO vacant, rest of boundary non-vacant).
+// Guarded by test_pluto_only_equals_both_at_max_threshold in tests/py.
+const PLUTO_ONLY_ARCHIVE = { source: 'both', threshold: 't1000' };
+
+// Which archive holds a vacancy source (PLUTO-only is threshold-independent)
+export function archiveFor(threshold, source) {
+  return source === 'pluto' ? PLUTO_ONLY_ARCHIVE : { source, threshold };
+}
+
+// ── Model-only from Model + PLUTO ────────────────────
+// See "Model-only from Model + PLUTO" in server/compositing.py. All color treatment is prerendered in
+// Python; the browser only picks, per pixel, between two prerendered tiles.
+
+export const MODEL_ONLY_PROTOCOL = 'vacancy-model';
+const LEVEL_NOT_PLUTO = 255;
+
+export function modelOnlyTileUrl(threshold) {
+  return `${MODEL_ONLY_PROTOCOL}://{z}/{x}/{y}?t=${threshold}`;
+}
+
+export function modelOnlyUrls(base = PMTILES_BASE_URL) {
+  return {
+    nonvacant: `${base}/pluto_nonvacant.pmtiles`,
+    levels: `${base}/model_levels.pmtiles`,
+  };
+}
+
+/**
+ * Turn a Model + PLUTO tile into Model-only in place: wherever the level tile says
+ * "PLUTO, but not model-vacant at this threshold" (level <= index), take the
+ * pluto_nonvacant pixel. RGBA arrays of equal length.
+ */
+export function selectModelOnly(baseRGBA, nonvacantRGBA, levelRGBA, thresholdIndex) {
+  for (let i = 0; i < baseRGBA.length; i += 4) {
+    if (levelRGBA[i] <= thresholdIndex) {
+      baseRGBA[i] = nonvacantRGBA[i];
+      baseRGBA[i + 1] = nonvacantRGBA[i + 1];
+      baseRGBA[i + 2] = nonvacantRGBA[i + 2];
+    }
+  }
+  return baseRGBA;
+}
+
+/**
+ * MapLibre protocol handler for vacancy-model://{z}/{x}/{y}?t=<threshold>.
+ * Dependencies are injected so the logic is testable without a browser.
+ */
+export function makeModelOnlyHandler({ getArchive, decodePixels, pixelsToImage, base = PMTILES_BASE_URL }) {
+  const archives = modelOnlyUrls(base);
+  let thresholds = null;
+
+  return async (params, abortController) => {
+    const m = params.url.match(/^[\w-]+:\/\/(\d+)\/(\d+)\/(\d+)\?t=(t\d+)$/);
+    if (!m) throw new Error(`Bad Model-only tile URL: ${params.url}`);
+    const [z, x, y] = m.slice(1, 4).map(Number);
+    const threshold = m[4];
+    const signal = abortController?.signal;
+
+    // A missing tile is only a directory lookup, so all three can start at once
+    const [baseTile, levelTile, nonvacantTile] = await Promise.all([
+      getArchive(`${base}/both/${threshold}.pmtiles`).getZxy(z, x, y, signal),
+      getArchive(archives.levels).getZxy(z, x, y, signal),
+      getArchive(archives.nonvacant).getZxy(z, x, y, signal),
+    ]);
+    if (!baseTile) return { data: new Uint8Array(0) };
+    // No PLUTO pixels in this tile: Model-only is identical to Model + PLUTO
+    if (!levelTile || !nonvacantTile) return { data: baseTile.data };
+
+    thresholds ??= getArchive(archives.levels).getMetadata().then(meta => meta.thresholds);
+    const index = (await thresholds).indexOf(threshold);
+    if (index < 0) throw new Error(`Threshold ${threshold} not in model_levels`);
+
+    const [basePx, nonvacantPx, levelPx] = await Promise.all(
+      [baseTile, nonvacantTile, levelTile].map(t => decodePixels(t.data)),
+    );
+    selectModelOnly(basePx.data, nonvacantPx.data, levelPx.data, index);
+    return { data: await pixelsToImage(basePx) };
+  };
+}
+
+async function decodePixels(buffer) {
+  // 'none': level values and pixel colors must come through unaltered
+  const bitmap = await createImageBitmap(new Blob([buffer]), {
+    colorSpaceConversion: 'none', premultiplyAlpha: 'none',
+  });
+  const canvas = typeof OffscreenCanvas !== 'undefined'
+    ? new OffscreenCanvas(bitmap.width, bitmap.height)
+    : Object.assign(document.createElement('canvas'), { width: bitmap.width, height: bitmap.height });
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function pixelsToImage(imageData) {
+  return createImageBitmap(imageData);
+}
+
+export function pmtilesProductUrl(threshold, source, base = PMTILES_BASE_URL) {
+  const archive = archiveFor(threshold, source);
+  return `pmtiles://${base}/${archive.source}/${archive.threshold}.pmtiles`;
+}
+
+/** Raster source spec for a vacancy source at a threshold. */
+export function productSource(threshold, source, base = PMTILES_BASE_URL) {
+  if (source === 'model') {
+    return { type: 'raster', tiles: [modelOnlyTileUrl(threshold)], tileSize: 256, maxzoom: MAP_MAX_ZOOM };
+  }
+  return { type: 'raster', url: pmtilesProductUrl(threshold, source, base), tileSize: 256, maxzoom: MAP_MAX_ZOOM };
+}
+
+/** Whether the vacancy product should be drawn (NAIP and overlay-off show the plain basemap). */
+export function productVisible({ overlay, naip }) {
+  return overlay && !naip;
+}
+
+function sameShape(a, b) {
+  return !!a.url === !!b.url && a.minzoom === b.minzoom && a.maxzoom === b.maxzoom;
+}
+
+/**
+ * Point a raster layer at a new source spec without changing its position in the
+ * layer stack or its visibility. Updates in place when possible to avoid a flash.
+ */
+export function setRasterSource(map, layerId, sourceId, spec) {
+  const existing = map.getSource(sourceId);
+  const current = existing?.serialize?.();
+  if (current && map.getLayer(layerId) && sameShape(current, spec)) {
+    if (spec.url && current.url !== spec.url) existing.setUrl(spec.url);
+    else if (spec.tiles && current.tiles?.[0] !== spec.tiles[0]) existing.setTiles(spec.tiles);
+    return;
+  }
+
+  const layers = map.getStyle().layers;
+  const idx = layers.findIndex(l => l.id === layerId);
+  const beforeId = idx >= 0 ? layers[idx + 1]?.id : undefined;
+  const visibility = idx >= 0 ? (map.getLayoutProperty(layerId, 'visibility') ?? 'visible') : 'visible';
+
+  if (idx >= 0) map.removeLayer(layerId);
+  if (existing) map.removeSource(sourceId);
+  map.addSource(sourceId, spec);
+  map.addLayer({ id: layerId, type: 'raster', source: sourceId, layout: { visibility } }, beforeId);
+}

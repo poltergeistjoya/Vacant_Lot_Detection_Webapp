@@ -6,7 +6,11 @@ data/playground_snapshots.json
 data/cache/
 data/athletic_surfaces.geojson
 data/athletic_surfaces_enriched.geojson
+data/pmtiles/
+data/tiles/
 .DS_Store
 *.pyc
 __pycache__/
 .venv/
+.env
+.env.local

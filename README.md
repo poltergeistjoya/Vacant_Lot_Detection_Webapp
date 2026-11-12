@@ -14,16 +14,18 @@ Live at **[app.joya.dev](https://app.joya.dev)**
 uv sync                              # install Python dependencies
 npm install                          # install JS dependencies
 
-# Config: copy template and fill in paths, or set the env var
+# Config: copy template and fill in paths (gitignored). With worktrees, put it
+# one folder up instead (../config.local.yaml) to share it across all of them.
 cp config.template.yaml config.local.yaml
-# OR: export GENERATE_MASKS_CONFIG=~/.config/generate_masks/config.local.yaml
 
 # Generate masks for all thresholds (or use -t 0.298 for just one)
 cd scripts && uv run prepare_mask_overlay.py --all && cd ..
 
-# Start the backend + frontend
-uv run uvicorn server.app:app --reload &  # FastAPI backend on :8000
-npm run dev                               # Vite dev server on :5173
+# Start the backend + frontend. Tiles are read from the bucket in .env
+# (cp .env.example .env) with your gcloud credentials:
+#   gcloud auth application-default login
+uv run --env-file .env uvicorn server.dev:app --reload &  # FastAPI backend on :8000
+npm run dev                                               # Vite dev server on :5173
 ```
 
 Open http://localhost:5173 in your browser.
@@ -31,8 +33,10 @@ Open http://localhost:5173 in your browser.
 ## Playground (local dev only)
 
 The color-tuning playground (`src/playground.html`) is available only during
-local development via `npm run dev`. It is **not** included in production
-Docker builds or deployed to Cloud Run.
+local development via `npm run dev`, backed by `server.dev:app`, which adds the
+live-compositing routes (`server/playground.py`). Neither is included in
+production Docker builds or deployed to Cloud Run: the deployed app
+(`server.app:app`) only serves the prerendered PMTiles archives.
 
 ## Docker
 
@@ -45,12 +49,15 @@ Open http://localhost:8000 — serves both the API and the built frontend.
 
 ## Deploy (Google Cloud Run)
 
-One-time setup:
+One-time setup (copy `.env.example` to `.env` and fill it in first):
 
 ```bash
+set -a; source .env; set +a
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
-gcloud artifacts repositories create vacant-lot --repository-format=docker --location=us-east4
+gcloud artifacts repositories create "$ARTIFACT_REPO" --repository-format=docker --location="$GCP_REGION"
 ```
+
+The tile bucket stays private: Cloud Run reads it with its service account and serves archives at `/api/pmtiles/`. The service account needs `roles/storage.objectViewer` on the bucket.
 
 Deploy:
 

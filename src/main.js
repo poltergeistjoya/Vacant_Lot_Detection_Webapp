@@ -6,6 +6,10 @@ import {
   CHECKPOINTS, NAIP_TILE_URL,
   BRONX_CD_NAMES,
 } from './lib/layers.js';
+import {
+  initPMTilesProtocol, productSource, productVisible, setRasterSource,
+  PRODUCT_LAYER, MAP_MAX_ZOOM,
+} from './lib/tiles.js';
 import { addDistrictLayer } from './lib/districts.js';
 import {
   addParcelLayer,
@@ -17,6 +21,8 @@ import {
 import { addAthleticLayer, updateAthleticThreshold } from './lib/athletic.js';
 import { initSlider, setThresholdsData, getDefaultIndex } from './slider.js';
 import { TOOLTIPS } from './tooltips.js';
+
+initPMTilesProtocol();
 
 const defaultCP = CHECKPOINTS[getDefaultIndex()];
 let currentTStr = defaultCP.tStr;
@@ -186,40 +192,32 @@ function updateFooter() {
 }
 
 // ── Map ─────────────────────────────────────────────
+const initialSources = {
+  basemap: {
+    type: 'raster',
+    tiles: [ESRI_BASEMAP_URL],
+    tileSize: 256,
+    attribution: ESRI_ATTRIBUTION,
+  },
+  [PRODUCT_LAYER.sourceId]: productSource(currentTStr, vacancySource),
+};
+
+const initialLayers = [
+  { id: 'basemap-layer', type: 'raster', source: 'basemap' },
+  { id: PRODUCT_LAYER.layerId, type: 'raster', source: PRODUCT_LAYER.sourceId },
+];
+
 const map = window._map = new maplibregl.Map({
   container: 'map',
   style: {
     version: 8,
-    sources: {
-      basemap: {
-        type: 'raster',
-        tiles: [ESRI_BASEMAP_URL],
-        tileSize: 256,
-        attribution: ESRI_ATTRIBUTION,
-      },
-      'product-cached': {
-        type: 'raster',
-        tiles: [`/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=both`],
-        tileSize: 256,
-        maxzoom: 18,
-      },
-      product: {
-        type: 'raster',
-        tiles: [`/api/tile/product/{z}/{x}/{y}.jpg?t=${currentTStr}&source=both`],
-        tileSize: 256,
-        maxzoom: 19,
-      },
-    },
-    layers: [
-      { id: 'basemap-layer', type: 'raster', source: 'basemap' },
-      { id: 'product-cached-layer', type: 'raster', source: 'product-cached' },
-      { id: 'product-layer', type: 'raster', source: 'product' },
-    ],
+    sources: initialSources,
+    layers: initialLayers,
   },
   center: BRONX_CENTER_LNG_LAT,
   zoom: DEFAULT_ZOOM,
   minZoom: MIN_ZOOM,
-  maxZoom: 19,
+  maxZoom: MAP_MAX_ZOOM,
   maxBounds: MAX_BOUNDS,
 });
 
@@ -236,13 +234,9 @@ map.on('idle', () => {
 
 // ── Tile URL logic ─────────────────────────────────
 function updateTileSource() {
-  if (layerState.naip) {
-    map.getSource('product')?.setTiles([NAIP_TILE_URL]);
-    return;
-  }
-  const tStr = layerState.overlay ? currentTStr : 't0000';
-  const url = `/api/tile/product/{z}/{x}/{y}.jpg?t=${tStr}&source=${vacancySource}`;
-  map.getSource('product')?.setTiles([url]);
+  const { layerId, sourceId } = PRODUCT_LAYER;
+  setRasterSource(map, layerId, sourceId, productSource(currentTStr, vacancySource));
+  map.setLayoutProperty(layerId, 'visibility', productVisible(layerState) ? 'visible' : 'none');
 }
 
 function applyBasemapTreatment(bm) {
@@ -511,7 +505,7 @@ function toggleLayer(id, visible) {
   } else if (id === 'naip') {
     layerState.naip = visible;
     map.getSource('basemap')?.setTiles([visible ? NAIP_TILE_URL : ESRI_BASEMAP_URL]);
-    map.setLayoutProperty('product-layer', 'visibility', visible ? 'none' : 'visible');
+    updateTileSource();
     updateFooter();
   } else if (id === 'cd') {
     const vis = visible ? 'visible' : 'none';
@@ -544,7 +538,6 @@ function toggleLayer(id, visible) {
 // ── Threshold change ────────────────────────────────
 function onThresholdChange(cp) {
   currentTStr = cp.tStr;
-  _prefetched.clear();
   updateTileSource();
   
     const count = updateParcelThreshold(map, cp.tStr);
@@ -563,46 +556,6 @@ function onThresholdChange(cp) {
   updateStats();
 }
 
-// ── PLUTO tile prefetch ────────────────────────────
-const _prefetched = new Set();
-let _prefetchDebounce = null;
-
-function prefetchTilesAtZoom(zoom) {
-  const bounds = map.getBounds();
-  const n = 2 ** zoom;
-  const toTileX = lng => Math.floor((lng + 180) / 360 * n);
-  const toTileY = lat => {
-    const r = lat * Math.PI / 180;
-    return Math.floor((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n);
-  };
-  const minX = toTileX(bounds.getWest());
-  const maxX = toTileX(bounds.getEast());
-  const minY = toTileY(bounds.getNorth());
-  const maxY = toTileY(bounds.getSouth());
-  for (let x = minX; x <= maxX; x++) {
-    for (let y = minY; y <= maxY; y++) {
-      const key = `${zoom}/${x}/${y}/${currentTStr}`;
-      if (_prefetched.has(key)) continue;
-      _prefetched.add(key);
-      fetch(`/api/tile/product/${zoom}/${x}/${y}.jpg?t=${currentTStr}&source=${vacancySource}`)
-        .catch(() => {});
-    }
-  }
-}
-
-function prefetchPlutoTiles() {
-  clearTimeout(_prefetchDebounce);
-  _prefetchDebounce = setTimeout(() => {
-    const zoom = Math.round(map.getZoom());
-    prefetchTilesAtZoom(zoom);
-    if (zoom >= 16 && zoom <= 18) {
-      prefetchTilesAtZoom(zoom + 1);
-    } else if (zoom === 19) {
-      prefetchTilesAtZoom(18);
-    }
-  }, 1000);
-}
-
 // ── Imagery metadata ───────────────────────────────
 let imageryDebounce = null;
 function onMapMove() {
@@ -612,7 +565,6 @@ function onMapMove() {
     imagerySource = await fetchImageryInfo(lng, lat, map.getZoom());
     updateFooter();
   }, 500);
-  prefetchPlutoTiles();
 }
 
 // ── Init ────────────────────────────────────────────
@@ -639,7 +591,6 @@ map.on('load', () => {
   }
   onMapMove();
   map.on('moveend', onMapMove);
-  prefetchPlutoTiles();
 });
 
 async function addCDLayer() {
