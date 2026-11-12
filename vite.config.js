@@ -21,8 +21,8 @@ function maplibreWorkerPlugin() {
 }
 
 const PMTILES_BASE_URL = process.env.VITE_PMTILES_BASE_URL || '';
-// Comma-separated vacancy sources with uploaded archives (e.g. "both,model,pluto")
-const PMTILES_SOURCES = (process.env.VITE_PMTILES_SOURCES || 'both').split(',').map(s => s.trim()).filter(Boolean);
+// Comma-separated archives uploaded under the base URL (see src/lib/tiles.js)
+const PMTILES_SOURCES = (process.env.VITE_PMTILES_SOURCES || 'both,pluto_nonvacant,model_levels').split(',').map(s => s.trim()).filter(Boolean);
 
 export default {
   root: 'src',

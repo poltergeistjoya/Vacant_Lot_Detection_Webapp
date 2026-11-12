@@ -6,11 +6,9 @@ RUN npm ci
 COPY vite.config.js ./
 COPY src/ src/
 COPY data/ data/
-ARG VITE_PMTILES_BASE_URL="https://storage.googleapis.com/vacant-lot-tiles/pmtiles"
+# Passed by deploy.sh (cloudbuild.yaml); empty = server tiles only
+ARG VITE_PMTILES_BASE_URL=""
 ENV VITE_PMTILES_BASE_URL=$VITE_PMTILES_BASE_URL
-# Vacancy sources with uploaded archives; others are served by the API
-ARG VITE_PMTILES_SOURCES="both"
-ENV VITE_PMTILES_SOURCES=$VITE_PMTILES_SOURCES
 RUN npm run build
 
 # ── Stage 2: Python runtime ──────────────────────────────────────

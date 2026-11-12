@@ -45,7 +45,7 @@ ESRI_URL = (
 _client = httpx.AsyncClient(timeout=15.0, limits=httpx.Limits(max_connections=20))
 
 # ── Pre-rendered tile store ─────────────────────────
-# Set TILE_STORE_BUCKET to a GCS bucket name (e.g. vacant-lot-tiles)
+# Set TILE_STORE_BUCKET to a GCS bucket name
 # or TILE_STORE_PATH to a local directory (e.g. data/tiles).
 # Tiles are expected at the path returned by prerendered_tile_path().
 TILE_STORE_BUCKET = os.environ.get("TILE_STORE_BUCKET", "")
@@ -422,23 +422,19 @@ def _crop_resize_mask(full_mask, src_top, src_bottom, src_left, src_right,
     return tile
 
 
-def _get_tile_masks(z, x, y, threshold_str, source="both"):
-    """Return (vacant_mask, nonvacant_mask) resized to 256x256 for this tile.
+def _tile_cropper(z, x, y, bounds, shape):
+    """Return crop(full_array, fill=0) mapping a full-extent mask onto this 256x256 tile.
 
-    source: "model" (model only), "pluto" (PLUTO only), "both" (model OR pluto).
-    Returns (None, None) if the tile is fully outside the mask extent.
+    Nearest-neighbor, so any per-pixel value (bool mask or uint8 level) samples the
+    same source pixels. Returns None if the tile is fully outside the mask extent.
     """
-    masks = _load_product_masks(threshold_str)
-    if masks is None:
-        return None, None
-
-    ml, mb, mr, mt = masks["bounds"]
+    ml, mb, mr, mt = bounds
     tl, tb, tr, tt = _tile_to_mercator_bounds(z, x, y)
 
     if tr <= ml or tl >= mr or tt <= mb or tb >= mt:
-        return None, None
+        return None
 
-    h, w = masks["shape"]
+    h, w = shape
     mx_per_px = (mr - ml) / w
     my_per_px = (mt - mb) / h
 
@@ -453,7 +449,7 @@ def _get_tile_masks(z, x, y, threshold_str, source="both"):
     src_bottom = min(h, int(math.ceil(px_bottom)))
 
     if src_right <= src_left or src_bottom <= src_top:
-        return None, None
+        return None
 
     dst_left = max(0, (src_left - px_left) / (px_right - px_left) * 256)
     dst_top = max(0, (src_top - px_top) / (px_bottom - px_top) * 256)
@@ -463,9 +459,32 @@ def _get_tile_masks(z, x, y, threshold_str, source="both"):
     dst_h = max(1, int(round(dst_bottom - dst_top)))
     dl, dt = int(round(dst_left)), int(round(dst_top))
 
-    def _crop(full_mask):
-        return _crop_resize_mask(
-            full_mask, src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
+    def crop(full, fill=0):
+        if full.dtype == bool:
+            return _crop_resize_mask(
+                full, src_top, src_bottom, src_left, src_right, dst_h, dst_w, dt, dl)
+        part = full[src_top:src_bottom, src_left:src_right]
+        resized = np.array(Image.fromarray(part).resize((dst_w, dst_h), Image.NEAREST))
+        tile = np.full((256, 256), fill, dtype=full.dtype)
+        tile[dt:dt + dst_h, dl:dl + dst_w] = resized
+        return tile
+
+    return crop
+
+
+def _get_tile_masks(z, x, y, threshold_str, source="both"):
+    """Return (vacant_mask, nonvacant_mask) resized to 256x256 for this tile.
+
+    source: "model" (model only), "pluto" (PLUTO only), "both" (model OR pluto).
+    Returns (None, None) if the tile is fully outside the mask extent.
+    """
+    masks = _load_product_masks(threshold_str)
+    if masks is None:
+        return None, None
+
+    _crop = _tile_cropper(z, x, y, masks["bounds"], masks["shape"])
+    if _crop is None:
+        return None, None
 
     model_vacant = _crop(masks["vacant"])
     model_nonvacant = _crop(masks["nonvacant"])
@@ -490,6 +509,59 @@ def _get_tile_masks(z, x, y, threshold_str, source="both"):
     vacant_tile = model_vacant | pluto_tile
     nonvacant_tile = model_nonvacant & ~pluto_tile
     return vacant_tile, nonvacant_tile
+
+
+# ── Model-only from Model + PLUTO ────────────────────
+# Model-only differs from Model + PLUTO only on PLUTO pixels the model doesn't call
+# vacant at the current threshold: those need the non-vacant treatment instead of
+# the vacant one. The browser builds Model-only tiles from both/{t}.pmtiles plus two
+# threshold-independent archives (src/lib/tiles.js, scripts/generate_pmtiles.py):
+#   pluto_nonvacant: Esri with the non-vacant treatment, tiles containing PLUTO only
+#   model_levels:    per PLUTO pixel, how many thresholds the model calls it vacant
+#                    (vacant masks are nested, so vacant at thresholds[i] <=> level > i);
+#                    LEVEL_NOT_PLUTO elsewhere, meaning never replace
+# Take the pluto_nonvacant pixel at threshold index i  <=>  level <= i.
+
+LEVEL_NOT_PLUTO = 255
+
+
+def mask_thresholds() -> list[str]:
+    """Threshold names with masks, ascending (the index order level tiles encode)."""
+    return sorted(d.name for d in MASKS_DIR.iterdir() if d.is_dir() and d.name.startswith("t"))
+
+
+@lru_cache(maxsize=1)
+def _load_model_levels():
+    """Full-extent uint8 raster: number of thresholds at which each pixel is model-vacant."""
+    shared = _load_shared_masks()
+    level = np.zeros(shared["shape"], dtype=np.uint8)
+    for t in mask_thresholds():
+        vacant_path = MASKS_DIR / t / "vacant.png"
+        level += (np.array(Image.open(vacant_path))[:, :, 3] > 127)
+    return level
+
+
+def get_model_level_tile(z, x, y):
+    """uint8 256x256 model_levels tile, or None if the tile has no PLUTO pixels."""
+    shared = _load_shared_masks()
+    if shared is None or shared.get("pluto_vacant") is None:
+        return None
+    crop = _tile_cropper(z, x, y, shared["bounds"], shared["shape"])
+    if crop is None:
+        return None
+    pluto_tile = crop(shared["pluto_vacant"])
+    if not pluto_tile.any():
+        return None
+    level_tile = crop(_load_model_levels())
+    return np.where(pluto_tile, level_tile, LEVEL_NOT_PLUTO).astype(np.uint8)
+
+
+def select_model_only(both_u8, nonvacant_u8, level_tile, threshold_index):
+    """Model-only tile from a Model + PLUTO tile: pixel selection only, no color math."""
+    out = both_u8.copy()
+    replace = level_tile <= threshold_index
+    out[replace] = nonvacant_u8[replace]
+    return out
 
 
 # ── API endpoints ────────────────────────────────────
@@ -695,11 +767,16 @@ _composite_pool = concurrent.futures.ThreadPoolExecutor(max_workers=4)
 
 def _composite_tile_sync(tile_bytes, z, x, y, t, src, base_kwargs, outside_kwargs, nv_kwargs):
     """CPU-heavy tile compositing. Runs in thread pool to keep the event loop free."""
-    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, source=src)
     tile_u8 = tile_bytes_to_uint8(tile_bytes)
+    return uint8_to_jpeg(composite_tile_u8(tile_u8, z, x, y, t, src, base_kwargs, outside_kwargs, nv_kwargs))
+
+
+def composite_tile_u8(tile_u8, z, x, y, t, src, base_kwargs, outside_kwargs, nv_kwargs):
+    """Composite an Esri tile array with the vacancy treatments. Returns (256, 256, 3) uint8."""
+    vacant_mask, nonvacant_mask = _get_tile_masks(z, x, y, t, source=src)
 
     if vacant_mask is None:
-        return uint8_to_jpeg(apply_color_ops_fast(tile_u8, **outside_kwargs))
+        return apply_color_ops_fast(tile_u8, **outside_kwargs)
 
     base_out = apply_color_ops_fast(tile_u8, **base_kwargs)
     nv_out = apply_color_ops_fast(tile_u8, **nv_kwargs)
@@ -713,7 +790,7 @@ def _composite_tile_sync(tile_bytes, z, x, y, t, src, base_kwargs, outside_kwarg
         outside_out = apply_color_ops_fast(tile_u8, **outside_kwargs)
         result[outside_pixels] = outside_out[outside_pixels]
 
-    return uint8_to_jpeg(result)
+    return result
 
 
 @app.get("/api/tile/product/{z}/{x}/{y}.jpg")

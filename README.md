@@ -45,12 +45,33 @@ Open http://localhost:8000 — serves both the API and the built frontend.
 
 ## Deploy (Google Cloud Run)
 
-One-time setup:
+One-time setup (copy `.env.example` to `.env` and fill it in first):
 
 ```bash
+source scripts/env.sh
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
-gcloud artifacts repositories create vacant-lot --repository-format=docker --location=us-east4
+gcloud artifacts repositories create "$ARTIFACT_REPO" --repository-format=docker --location="$GCP_REGION"
 ```
+
+The browser fetches PMTiles straight from the bucket with range requests, so the bucket needs CORS for the app's origins. Save this as `cors.json`, with your domains in `origin`:
+
+```json
+[
+  {
+    "origin": ["https://your-domain.example", "http://localhost:5173", "http://localhost:4173"],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Range", "Content-Range", "Content-Length", "Accept-Ranges", "ETag"],
+    "maxAgeSeconds": 3600
+  }
+]
+```
+
+```bash
+gcloud storage buckets update "gs://$TILE_STORE_BUCKET" --cors-file=cors.json
+gcloud storage buckets describe "gs://$TILE_STORE_BUCKET" --format='json(cors_config)'   # verify
+```
+
+Re-run with the updated list when adding a domain.
 
 Deploy:
 
