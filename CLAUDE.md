@@ -26,14 +26,14 @@ How each vacancy source is served (`src/lib/tiles.js`):
 ## Tile pipeline
 
 ```bash
-uv run scripts/prerender_tiles.py           # Model + PLUTO loose tiles, z11–19, all thresholds → data/tiles/product/
-uv run scripts/generate_pmtiles.py          # → data/pmtiles/both/{t}.pmtiles, pluto_nonvacant.pmtiles, model_levels.pmtiles (--archive to pick)
+uv run scripts/prerender_tiles.py           # renders all loose tiles, z11–19 → data/tiles/{product/{t},pluto_nonvacant,model_levels}/ (masks + treatment + Esri)
+uv run scripts/generate_pmtiles.py          # packages them only → data/pmtiles/both/{t}.pmtiles, pluto_nonvacant.pmtiles, model_levels.pmtiles (--archive to pick)
 npm run test:all                            # includes archive header checks
 ./scripts/upload_pmtiles.sh                 # new/changed data/pmtiles/ → gs://$TILE_STORE_BUCKET/pmtiles/ (or name archives: both, both/t0298, model_levels; -n = dry run)
 ./deploy.sh                                 # runs tests first
 ```
 
-Re-run both scripts when masks or the color treatment change. Rendering is resumable: existing loose tiles are skipped.
+Re-run both scripts when masks or the color treatment change (delete the stale loose tiles first: rendering is resumable and skips tiles that exist).
 
 ## Data pipeline scripts
 
