@@ -6,7 +6,7 @@ basemap tiles are composited server-side with per-zone color treatments
 (basemap / vacant / non-vacant) so the real aerial photography stays visible
 under every effect.
 
-Live at **[app.joya.dev](https://app.joya.dev)**
+Live at **[vacantlots.joya.dev](https://vacantlots.joya.dev)**
 
 ## Quick Start
 
@@ -65,8 +65,11 @@ Deploy:
 ./deploy.sh
 ```
 
-Custom domain: add a CNAME record at your registrar pointing to
-`ghs.googlehosted.com`, then create a Cloud Run domain mapping.
+Custom domain: verify the domain in Google Search Console (a TXT record at the root), create a Cloud Run domain mapping
+(`gcloud beta run domain-mappings create --service vacant-lot-app --domain vacantlots.joya.dev --region us-east1`),
+then add a CNAME record at your registrar pointing `vacantlots` to `ghs.googlehosted.com`.
+
+Cost and sizing: see `docs/soak-test-2026-11-24.md` (512Mi, 2 workers, max 3 instances in us-east1).
 
 ## Generating masks
 
