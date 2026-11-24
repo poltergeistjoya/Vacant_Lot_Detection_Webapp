@@ -6,13 +6,15 @@ Scripts in `scripts/` load config via `scripts/config.py`: `GENERATE_MASKS_CONFI
 
 The repo is a bare clone with each worktree as a sibling folder, so one `config.local.yaml` in the bare repo folder (next to `main/` and the other worktrees) serves all of them. Don't put it in the home directory.
 
-Deployment settings (GCP project, region, Cloud Run service, bucket) live in `.env` in the repo root (gitignored; template `.env.example`). `deploy.sh` and `scripts/upload_pmtiles.sh` load it themselves. Don't hardcode them in tracked files.
+Deployment settings (GCP project, region, Cloud Run service, bucket) (plus Cloud Run memory, workers, min instances) live in `deploy.env` in the repo root. It is tracked in git and holds identifiers only: never put keys or tokens in it. `deploy.sh` and `scripts/upload_pmtiles.sh` load it. Don't hardcode these values elsewhere in tracked files.
+
+New worktree: run `scripts/setup_worktree.sh` (`npm ci`, `uv sync`, tests).
 
 ## Tile compositing
 
 All color treatment of vacancy tiles (Esri imagery + vacancy masks + `data/product_treatment.json`) is done in Python (`server/compositing.py`: `apply_color_ops_fast`, `composite_tile_u8`) when tiles are prerendered. Do **not** move color treatment to the browser: JS/WebGL/MapLibre paint properties don't reproduce the Python pipeline (LUT-based Oklch). The browser may only do **pixel selection between tiles that Python prerendered**.
 
-Tiles are served as PMTiles from a **private** bucket: the browser's pmtiles library makes range requests to `/api/pmtiles/<archive>`, which Cloud Run forwards to `gs://$TILE_STORE_BUCKET/pmtiles/` with its service account (`server/app.py`, "PMTiles archives"). Locally too: run `uv run --env-file .env uvicorn server.dev:app --reload` (gcloud application-default credentials); archives are never served from `data/`. Don't make bucket objects public.
+Tiles are served as PMTiles from a **private** bucket: the browser's pmtiles library makes range requests to `/api/pmtiles/<archive>`, which Cloud Run forwards to `gs://$TILE_STORE_BUCKET/pmtiles/` with its service account (`server/app.py`, "PMTiles archives"). Locally too: run `uv run --env-file deploy.env uvicorn server.dev:app --reload` (gcloud application-default credentials); archives are never served from `data/`. Don't make bucket objects public.
 
 The deployed app (`server.app:app`) only proxies archives and serves the built frontend: it never imports `server/compositing.py` or reads `data/masks/` (guarded by `test_production_app_does_not_load_compositing`). Masks are only for prerendering and for the dev-only playground (`server/dev.py` adds `server/playground.py`). The frontend gets data files from the `WEB_DATA` list in `vite.config.js`, not all of `data/`.
 
