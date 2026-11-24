@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger(__name__)
 
-# Bucket holding pmtiles/ (gs://TILE_STORE_BUCKET/pmtiles/), set in .env / on Cloud Run
+# Bucket holding pmtiles/ (gs://TILE_STORE_BUCKET/pmtiles/), set in deploy.env / on Cloud Run
 TILE_STORE_BUCKET = os.environ.get("TILE_STORE_BUCKET", "")
 
 _DIST_DIR = Path(__file__).resolve().parent.parent / "dist"
@@ -87,7 +87,7 @@ async def _pmtiles_range(name, start, end):
 async def pmtiles_archive(name: str, request: Request):
     """Byte range of a PMTiles archive (see "PMTiles archives" above)."""
     if not TILE_STORE_BUCKET:
-        raise HTTPException(503, "TILE_STORE_BUCKET is not set (see .env.example)")
+        raise HTTPException(503, "TILE_STORE_BUCKET is not set (see deploy.env)")
     if not _PMTILES_NAME.match(name):
         raise HTTPException(404, "Archive not found")
     start, end = _parse_range(request.headers.get("range"))

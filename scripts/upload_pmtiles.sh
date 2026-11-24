@@ -11,8 +11,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-if [[ -f .env ]]; then set -a; source .env; set +a; fi
-: "${TILE_STORE_BUCKET:?set it in .env}"
+set -a; source deploy.env; set +a
+: "${TILE_STORE_BUCKET:?set it in deploy.env}"
 
 LOCAL_ROOT="data/pmtiles"
 REMOTE_ROOT="gs://${TILE_STORE_BUCKET}/pmtiles"

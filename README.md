@@ -6,7 +6,7 @@ basemap tiles are composited server-side with per-zone color treatments
 (basemap / vacant / non-vacant) so the real aerial photography stays visible
 under every effect.
 
-Live at **[app.joya.dev](https://app.joya.dev)**
+Live at **[vacantlots.joya.dev](https://vacantlots.joya.dev)**
 
 ## Quick Start
 
@@ -21,10 +21,10 @@ cp config.template.yaml config.local.yaml
 # Generate masks for all thresholds (or use -t 0.298 for just one)
 cd scripts && uv run prepare_mask_overlay.py --all && cd ..
 
-# Start the backend + frontend. Tiles are read from the bucket in .env
-# (cp .env.example .env) with your gcloud credentials:
+# Start the backend + frontend. Tiles are read from the bucket in deploy.env
+# with your gcloud credentials:
 #   gcloud auth application-default login
-uv run --env-file .env uvicorn server.dev:app --reload &  # FastAPI backend on :8000
+uv run --env-file deploy.env uvicorn server.dev:app --reload &  # FastAPI backend on :8000
 npm run dev                                               # Vite dev server on :5173
 ```
 
@@ -49,10 +49,10 @@ Open http://localhost:8000 — serves both the API and the built frontend.
 
 ## Deploy (Google Cloud Run)
 
-One-time setup (copy `.env.example` to `.env` and fill it in first):
+One-time setup (settings come from `deploy.env`):
 
 ```bash
-set -a; source .env; set +a
+set -a; source deploy.env; set +a
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
 gcloud artifacts repositories create "$ARTIFACT_REPO" --repository-format=docker --location="$GCP_REGION"
 ```
@@ -65,8 +65,11 @@ Deploy:
 ./deploy.sh
 ```
 
-Custom domain: add a CNAME record at your registrar pointing to
-`ghs.googlehosted.com`, then create a Cloud Run domain mapping.
+Custom domain: verify the domain in Google Search Console (a TXT record at the root), create a Cloud Run domain mapping
+(`gcloud beta run domain-mappings create --service vacant-lot-app --domain vacantlots.joya.dev --region us-east1`),
+then add a CNAME record at your registrar pointing `vacantlots` to `ghs.googlehosted.com`.
+
+Cost and sizing: see `docs/soak-test-2026-11-24.md` (512Mi, 2 workers, max 3 instances in us-east1).
 
 ## Generating masks
 
